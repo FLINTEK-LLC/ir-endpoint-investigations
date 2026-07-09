@@ -287,7 +287,29 @@ scripts/
                               instead of merged - no Excel required, always runs
   Start-CaseParse.ps1        Runs Run-IRParse.ps1 across every host under one case
                               folder, then rolls up fast-triage output across hosts
+velociraptor/
+  README.md                  Recommended live-state Velociraptor artifacts to
+                              collect alongside file-collection (netstat/pslist/
+                              autoruns/services/dnscache), and how to use the
+                              custom artifact below
+  Custom.Windows.Hash.RecentExecutables.yaml  Custom Velociraptor artifact -
+                              hashes recently-modified executables in writable
+                              directories at collection time
 ```
+
+## Live system state at collection time
+
+`IR_Compound_Full.mkape` only parses what a file-based collection captures -
+files on disk, gone by the time KAPE runs. If your collector is still live
+when it runs, [`velociraptor/`](velociraptor/) documents the built-in
+Velociraptor artifacts worth adding alongside your file collection
+(`Windows.Network.NetstatEnriched`, `Windows.System.Pslist`,
+`Windows.Sysinternals.Autoruns`, `Windows.System.Services`,
+`Windows.System.DNSCache`) plus a custom artifact for hashing recently
+modified executables in common writable directories - adapted from
+[secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations).
+This is guidance and one adapted artifact, not a drop-in collector config -
+your own Velociraptor collector build is out of scope for this repo.
 
 ## Updating and maintaining this module
 
@@ -343,18 +365,17 @@ broader workflow:
   [`New-ReviewBundle.ps1`](scripts/New-ReviewBundle.ps1) (a folder of the same
   CSVs, no merge) remains as a dependency-free fallback and always runs
   regardless of whether Excel is present.
-- **Live system state at collection time, not just file artifacts.** This
-  project's `IR_Compound_Full.mkape` only parses what a
-  `Windows.KapeFiles.Targets`-style collection captures - files on disk.
-  Pairing the collector with Velociraptor's `Windows.Network.NetstatEnriched`,
-  `Windows.System.Pslist`, `Windows.Sysinternals.Autoruns`,
-  `Windows.System.Services`, and `Windows.System.DNSCache` artifacts would
-  capture running-process/network/persistence state that file-based triage
-  alone misses, if the collector is still live when it runs.
-- **A "recently modified executable" hunt at collection time.** A custom
-  Velociraptor artifact that hashes recently-modified executables in common
-  writable directories (`Users`, `ProgramData`, `Windows\Temp`) is a cheap,
-  high-value way to surface likely droppers before deep analysis even starts.
+- ~~Live system state at collection time, not just file artifacts~~ - done,
+  see [`velociraptor/`](velociraptor/) and "Live system state at collection
+  time" above: recommended built-in Velociraptor artifacts
+  (`Windows.Network.NetstatEnriched`, `Windows.System.Pslist`,
+  `Windows.Sysinternals.Autoruns`, `Windows.System.Services`,
+  `Windows.System.DNSCache`) plus a custom artifact for recently-modified
+  executable hashing, adapted from
+  [secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations)'s
+  `vr-win-hash-executables-artifact-rev2.yaml`. Documentation and one adapted
+  artifact only - the collector config itself stays out of this repo's
+  scope, since it varies too much environment to environment.
 - ~~Broader browser coverage~~ - done, see
   [`Get-BroaderBrowserHistory.ps1`](scripts/Get-BroaderBrowserHistory.ps1).
   Hindsight only covers Chromium-based browsers; this adds NirSoft's

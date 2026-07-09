@@ -1,0 +1,55 @@
+name: Custom.Windows.Hash.RecentExecutables
+description: |
+  Hashes (SHA1) recently-modified "executable-ish" files (exe, dll, ps1, bat,
+  cmd, vbs, scr, json, plus two configurable extra extensions) in the most
+  common user-writable Windows directories (C:\Users, C:\ProgramData,
+  C:\Windows\Temp) - a cheap, high-value way to surface likely droppers
+  before deep KAPE/EZ Tools analysis even starts. Run this at collection
+  time, alongside the file-collection artifact (Windows.KapeFiles.Targets or
+  equivalent) - it captures a live-state snapshot that a purely file-based
+  triage pass run later can't reconstruct on its own.
+
+  Adapted from secure-cake/rapid-endpoint-investigations
+  (https://github.com/secure-cake/rapid-endpoint-investigations,
+  vr-win-hash-executables-artifact-rev2.yaml) - same core PowerShell/VQL
+  approach, renamed with the `Custom.` prefix Velociraptor's own convention
+  recommends for user-added artifacts, so an upstream artifact-pack update
+  never collides with or silently overwrites this one.
+
+  IMPORTANT: if PowerShell script block logging is enabled (off by default),
+  the PowerShell invocation this artifact runs will itself generate EVTX
+  events - on a system where audit-log volume/retention is already a
+  concern, be aware this artifact adds to it.
+
+required_permissions:
+  - EXECVE
+
+precondition:
+  SELECT OS From info() where OS = 'windows'
+
+parameters:
+  - name: DaysSinceModified
+    description: Return files that were modified within this number of days.
+    default: 5
+
+  - name: AddFileExtension1
+    description: Add a file extension to the default list, include the leading period, example = .vhd
+    default: .vhd
+
+  - name: AddFileExtension2
+    description: Add a file extension to the default list, include the leading period, example = .iso
+    default: .iso
+
+sources:
+  - query: |
+      LET BaseScript = '''$FormatEnumerationLimit=-1; $paths='c:\users','c:\programdata','c:\windows\temp'; get-childitem -path $paths -Recurse -Force -ErrorAction SilentlyContinue | where {$_.LastWriteTime -gt (get-date).AddDays($DaysSinceModified)} | where {$_.extension -in ".exe",".bat",".ps1",".json",".dll",".vbs",".cmd",".scr",$AddFileExtension1,$AddFileExtension2} | Get-FileHash -Algorithm sha1 -ErrorAction SilentlyContinue | ConvertTo-Json'''
+      LET PoshPart1 <= join(array=['$DaysSinceModified=','"','-',DaysSinceModified,'"',";"," ",BaseScript])
+      LET PoshPart2 <= join(array=['$AddFileExtension1=','"',AddFileExtension1,'"',";"," ",PoshPart1])
+      LET PoshPart3 <= join(array=['$AddFileExtension2=','"',AddFileExtension2,'"',";"," ",PoshPart2])
+      SELECT * FROM foreach(
+        row={
+          SELECT Stdout FROM execve(argv=["Powershell", "-ExecutionPolicy",
+              "unrestricted", "-c", PoshPart3], length=1000000)
+        }, query={
+          SELECT * FROM parse_json_array(data=Stdout)
+      })
