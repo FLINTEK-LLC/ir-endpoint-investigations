@@ -154,10 +154,30 @@ Output is organized by KAPE's own artifact categories under
 | `ProgramExecution\` | Shimcache, Amcache, Prefetch |
 | `SRUMDatabase\` / `SUMDatabase\` | SRUM / SUM (SUM is typically empty on non-Server SKUs) |
 | `FileDeletion\` | Recycle Bin |
-| `EventLogs\` | EvtxECmd CSV, Chainsaw hunt output (rule + Sigma hits), Hayabusa Sigma timeline |
+| `EventLogs\` | EvtxECmd CSV, Chainsaw hunt output (rule + Sigma hits), Hayabusa Sigma timeline, plus `EvtxTriage.csv` (see below) |
 | `WebBrowsers\` | Hindsight browser history/artifacts (xlsx) |
 
-For review, load the CSVs into **Timeline Explorer** for the
+`Run-IRParse.ps1` also runs two fast triage passes automatically after every
+parse (skip with `-SkipTriagePostProcessing`, or run either standalone against
+existing results):
+
+- **`FileSystem\InterestingFiles.csv`** ([`Get-InterestingFiles.ps1`](scripts/Get-InterestingFiles.ps1)) -
+  MFT rows for high-signal extensions (`.exe`, `.ps1`, `.dll`, `.vbs`, `.zip`,
+  etc.) created in the last 30 days, with common dev/package-manager noise
+  (`node_modules`, `.git`, `WinSxS`, and similar) excluded by default. Tune
+  `-DaysBack` and `-ExcludePathPattern` for your case.
+- **`EventLogs\EvtxTriage.csv`** ([`Get-EvtxTriage.ps1`](scripts/Get-EvtxTriage.ps1)) -
+  EvtxECmd rows for a curated set of high-value Event IDs (logons, account
+  changes, scheduled tasks, PowerShell script block logging, audit log
+  clearing) within the last 15 days by default. This is a starting point, not
+  a replacement for the full EvtxECmd/Chainsaw/Hayabusa output - tune
+  `-EventIds` for your environment.
+
+Both are extension/keyword-based first passes, not a substitute for the full
+timeline/registry/event-log review - treat them as "start here," not "this is
+everything."
+
+For deeper review, load the CSVs into **Timeline Explorer** for the
 MFT/USN/Prefetch/LNK/JumpList data, **Registry Explorer** for anything beyond
 what the automated RECmd/RegRipper pass already pulled, and check the
 Chainsaw and Hayabusa outputs side by side - they use different rule sets
@@ -201,7 +221,10 @@ scripts/
   Deploy-Module.ps1          Just (re)deploys the module files onto a KAPE install -
                               no tool-fetching. Called by Setup-Workstation.ps1
                               internally; run it directly for a fast redeploy
-  Run-IRParse.ps1            Parses one collection
+  Run-IRParse.ps1            Parses one collection, then runs the two triage
+                              scripts below automatically
+  Get-InterestingFiles.ps1   Fast triage: recent high-signal files from the MFT
+  Get-EvtxTriage.ps1         Fast triage: curated Event IDs within a date window
 ```
 
 ## Updating and maintaining this module
@@ -263,16 +286,8 @@ broader workflow:
 - **Broader browser coverage.** Hindsight only covers Chromium-based browsers.
   Adding NirSoft's BrowsingHistoryView/WebBrowserDownloads (or an equivalent)
   would pick up Firefox and legacy Edge/IE history too.
-- **A fast, noise-reduced EVTX triage pass.** In addition to the full
-  EvtxECmd/Chainsaw/Hayabusa output, a lightweight first-pass filter (a
-  configurable date window plus a curated set of high-value event IDs -
-  logons, account changes, scheduled tasks, service installs, PowerShell
-  execution) would give analysts something to start with immediately, before
-  digging into the full parsed output.
-- **An "interesting files" MFT view.** A quick post-processing step that pulls
-  just the MFT rows matching high-signal extensions (`.exe`, `.ps1`, `.dll`,
-  `.vbs`, `.zip`, `.7z`, etc.) would surface likely-dropped files fast, ahead
-  of a full timeline review.
+- ~~A fast, noise-reduced EVTX triage pass~~ - done, see `Get-EvtxTriage.ps1`.
+- ~~An "interesting files" MFT view~~ - done, see `Get-InterestingFiles.ps1`.
 - **Multi-host / case-level orchestration.** `Run-IRParse.ps1` handles one
   collection at a time. A wrapper that iterates every host collected under a
   case folder (prompting for a case name, running the module against each,

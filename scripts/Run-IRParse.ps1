@@ -5,7 +5,12 @@ param(
 
     [string]$OutputPath,
 
-    [string]$KapePath
+    [string]$KapePath,
+
+    # Skip the automatic Get-InterestingFiles.ps1 / Get-EvtxTriage.ps1 post-processing
+    # pass - use this if you only want KAPE's raw output, or want to run those scripts
+    # yourself with non-default parameters.
+    [switch]$SkipTriagePostProcessing
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,6 +89,25 @@ foreach ($folder in $expectedFolders) {
     } else {
         Write-Host ("{0,-20} EMPTY" -f $folder) -ForegroundColor Yellow
     }
+}
+
+
+# --- Fast triage post-processing ---
+# These narrow the firehose above down to a first-look view (recent high-signal
+# files, a curated EVTX window) - not a replacement for the full output, just
+# somewhere to start. Failures here are reported but don't change the overall
+# exit code - the main KAPE run already succeeded or failed by this point.
+if (-not $SkipTriagePostProcessing) {
+    Write-Host ""
+    Write-Host "=== Triage post-processing ==="
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    # Spawned as separate powershell.exe processes, not called directly - an `exit`
+    # inside either script would otherwise terminate this whole Run-IRParse.ps1
+    # session, not just that script.
+    & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'Get-InterestingFiles.ps1') -ResultsPath $OutputPath
+    if ($LASTEXITCODE -ne 0) { Write-Host "Get-InterestingFiles.ps1 exited $LASTEXITCODE" -ForegroundColor Yellow }
+    & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'Get-EvtxTriage.ps1') -ResultsPath $OutputPath
+    if ($LASTEXITCODE -ne 0) { Write-Host "Get-EvtxTriage.ps1 exited $LASTEXITCODE" -ForegroundColor Yellow }
 }
 
 exit $kapeExit
