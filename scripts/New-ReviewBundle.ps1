@@ -22,7 +22,9 @@
     replace the full per-category output under <ResultsPath>\. Hindsight's
     browser-history output is already its own workbook and is deliberately
     left where it is rather than copied here - open it directly from
-    WebBrowsers\.
+    WebBrowsers\. The NirSoft browser history/downloads CSVs (broader
+    non-Chromium coverage) are copied in, since those are plain CSVs like
+    everything else here.
 #>
 [CmdletBinding()]
 param(
@@ -52,6 +54,8 @@ $items = @(
     @{ Name = 'Shimcache.csv';      Pattern = 'ProgramExecution\*AppCompatCache.csv' }
     @{ Name = 'LNK.csv';            Pattern = 'FileFolderAccess\*LECmd_Output.csv' }
     @{ Name = 'RecycleBin.csv';     Pattern = 'FileDeletion\*RBCmd_Output.csv' }
+    @{ Name = 'BrowserHistory.csv';   Pattern = 'WebBrowsers\BrowsingHistory.csv' }
+    @{ Name = 'BrowserDownloads.csv'; Pattern = 'WebBrowsers\BrowserDownloadsView.csv' }
 )
 
 $includedCount = 0

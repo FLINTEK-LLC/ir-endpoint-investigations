@@ -35,6 +35,7 @@ aren't implemented here yet.
 | Recycle Bin | RBCmd |
 | Windows Event Logs - parsed three independent ways | EvtxECmd (structured CSV), Chainsaw (built-in + Sigma rule hunting), Hayabusa (Sigma timeline) |
 | Browser history (all profiles, all browsers, all users, in one pass) | Hindsight |
+| Broader browser coverage - history and downloads for non-Chromium browsers (Firefox, legacy Edge/IE) alongside Chromium ones | NirSoft BrowsingHistoryView, BrowserDownloadsView |
 
 ## Prerequisites
 
@@ -50,8 +51,8 @@ aren't implemented here yet.
 - A collection to parse - see "Collection format" below for what this
   currently expects.
 
-Everything else (EZ Tools, Hayabusa, Chainsaw, Hindsight, RegRipper, and
-optionally a broader analyst toolset) is fetched automatically by the setup
+Everything else (EZ Tools, Hayabusa, Chainsaw, Hindsight, RegRipper, the
+NirSoft browser tools, and optionally a broader analyst toolset) is fetched automatically by the setup
 scripts below, straight from each tool's own official source. This repo does
 not bundle or redistribute any third-party binaries - **review each tool's own
 license before using it**; this project just automates fetching and wiring
@@ -68,7 +69,8 @@ cd ir-endpoint-investigations
 ```
 
 This deploys the module onto your KAPE install and fetches the full toolchain:
-EZ Tools, Hayabusa, Chainsaw, Hindsight, RegRipper (via `Manage-Tools.ps1`),
+EZ Tools, Hayabusa, Chainsaw, Hindsight, RegRipper, NirSoft's
+BrowsingHistoryView/BrowserDownloadsView (via `Manage-Tools.ps1`),
 plus a broader analyst kit - the EZ Tools GUI suite (Timeline Explorer,
 Registry Explorer, etc.), Sysinternals Suite, and Autopsy. Two extras -
 [Arsenal Image Mounter](https://arsenalrecon.com/downloads) and KAPE itself -
@@ -155,9 +157,9 @@ Output is organized by KAPE's own artifact categories under
 | `SRUMDatabase\` / `SUMDatabase\` | SRUM / SUM (SUM is typically empty on non-Server SKUs) |
 | `FileDeletion\` | Recycle Bin |
 | `EventLogs\` | EvtxECmd CSV, Chainsaw hunt output (rule + Sigma hits), Hayabusa Sigma timeline, plus `EvtxTriage.csv` (see below) |
-| `WebBrowsers\` | Hindsight browser history/artifacts (xlsx) |
+| `WebBrowsers\` | Hindsight browser history/artifacts (xlsx), plus NirSoft BrowsingHistoryView/BrowserDownloadsView CSVs for non-Chromium coverage (see below) |
 
-`Run-IRParse.ps1` also runs four fast triage steps automatically after every
+`Run-IRParse.ps1` also runs five fast triage steps automatically after every
 parse (skip all of them with `-SkipTriagePostProcessing`, or run any one
 standalone against existing results):
 
@@ -172,8 +174,15 @@ standalone against existing results):
   clearing) within the last 15 days by default. This is a starting point, not
   a replacement for the full EvtxECmd/Chainsaw/Hayabusa output - tune
   `-EventIds` for your environment.
+- **`WebBrowsers\BrowsingHistory.csv` / `BrowserDownloadsView.csv`** ([`Get-BroaderBrowserHistory.ps1`](scripts/Get-BroaderBrowserHistory.ps1)) -
+  runs NirSoft's BrowsingHistoryView and BrowserDownloadsView against the raw
+  collection for browser coverage Hindsight doesn't provide (Firefox, legacy
+  Edge/IE, and other non-Chromium browsers alongside Chromium ones). Unlike
+  the other triage steps this reads the raw `uploads\` tree directly rather
+  than KAPE's parsed output, since it needs to locate the actual `Users`
+  folder first.
 - **`ReviewWorkbook.xlsx`** ([`New-ReviewWorkbook.ps1`](scripts/New-ReviewWorkbook.ps1)) -
-  the two files above, plus Hayabusa, Chainsaw, Amcache, Prefetch, Shimcache,
+  the files above, plus Hayabusa, Chainsaw, Amcache, Prefetch, Shimcache,
   LNK, and Recycle Bin output, merged into **one workbook, one worksheet per
   artifact**, each sorted chronologically. This is the actual fix for
   tab-switching between output folders during first-pass review. Requires
@@ -184,7 +193,7 @@ standalone against existing results):
   clear filenames. Always runs regardless of whether Excel is installed, as a
   portable fallback.
 
-All four are extension/keyword-based first passes, not a substitute for the
+All five are extension/keyword-based first passes, not a substitute for the
 full timeline/registry/event-log review - treat them as "start here," not
 "this is everything."
 
@@ -258,16 +267,19 @@ Modules/!IR/
                               stock KAPE modules + IR_00_ToolVerify
 scripts/
   Manage-Tools.ps1           Verify / Setup / Update the KAPE toolchain (EZ Tools,
-                              Hayabusa, Chainsaw, Hindsight, RegRipper)
+                              Hayabusa, Chainsaw, Hindsight, RegRipper, NirSoft
+                              browser tools)
   Setup-Workstation.ps1      Full workstation provisioning: deploys the module,
                               runs Manage-Tools.ps1, plus a broader analyst toolset
   Deploy-Module.ps1          Just (re)deploys the module files onto a KAPE install -
                               no tool-fetching. Called by Setup-Workstation.ps1
                               internally; run it directly for a fast redeploy
-  Run-IRParse.ps1            Parses one collection, then runs the four triage
+  Run-IRParse.ps1            Parses one collection, then runs the five triage
                               scripts below automatically
   Get-InterestingFiles.ps1   Fast triage: recent high-signal files from the MFT
   Get-EvtxTriage.ps1         Fast triage: curated Event IDs within a date window
+  Get-BroaderBrowserHistory.ps1  Fast triage: NirSoft browser history/downloads for
+                              non-Chromium browsers, against the raw uploads\ tree
   New-ReviewWorkbook.ps1     Merges the triage + highest-signal outputs into one
                               ReviewWorkbook.xlsx (one worksheet per artifact) -
                               requires Excel installed (COM automation)
@@ -283,8 +295,9 @@ scripts/
   anytime. Checks every required tool is present.
 - `Manage-Tools.ps1 -Mode Setup` - fetches whatever `Verify` found missing.
 - `Manage-Tools.ps1 -Mode Update` - refreshes Hayabusa and Chainsaw's rule
-  sets, and re-syncs EZ Tools. **Hindsight and RegRipper have no automated
-  update mechanism** - re-run `-Mode Setup` to update those two. Note this
+  sets, and re-syncs EZ Tools. **Hindsight, RegRipper, and the NirSoft
+  browser tools have no automated update mechanism** - re-run `-Mode Setup`
+  to update those. Note this
   also triggers KAPE's own upstream sync process, which can reorganize
   `Modules\`/`Targets\` on the install - see the comments in
   `Manage-Tools.ps1` if you're extending this and land a custom module
@@ -342,9 +355,16 @@ broader workflow:
   Velociraptor artifact that hashes recently-modified executables in common
   writable directories (`Users`, `ProgramData`, `Windows\Temp`) is a cheap,
   high-value way to surface likely droppers before deep analysis even starts.
-- **Broader browser coverage.** Hindsight only covers Chromium-based browsers.
-  Adding NirSoft's BrowsingHistoryView/WebBrowserDownloads (or an equivalent)
-  would pick up Firefox and legacy Edge/IE history too.
+- ~~Broader browser coverage~~ - done, see
+  [`Get-BroaderBrowserHistory.ps1`](scripts/Get-BroaderBrowserHistory.ps1).
+  Hindsight only covers Chromium-based browsers; this adds NirSoft's
+  BrowsingHistoryView/BrowserDownloadsView for Firefox, legacy Edge/IE, and
+  other non-Chromium coverage. Neither tool supports an arbitrary-depth
+  recursive folder search - both need `/HistorySourceFolder`/`/SourceFolder`
+  pointed directly at the folder containing user profiles - so this runs as a
+  standalone step against the raw `uploads\` tree (locating the actual
+  `Users` folder itself) rather than as a KAPE module processor, keeping
+  `IR_Compound_Full.mkape`'s device-root-agnostic `msource` convention intact.
 - ~~A fast, noise-reduced EVTX triage pass~~ - done, see `Get-EvtxTriage.ps1`.
 - ~~An "interesting files" MFT view~~ - done, see `Get-InterestingFiles.ps1`.
 - ~~Multi-host / case-level orchestration~~ - done, see

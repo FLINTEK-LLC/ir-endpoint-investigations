@@ -56,6 +56,8 @@ $sheets = @(
     @{ Name = 'Shimcache';      Pattern = 'ProgramExecution\*AppCompatCache.csv';         SortCols = @('LastModifiedTimeUTC') }
     @{ Name = 'LNK';            Pattern = 'FileFolderAccess\*LECmd_Output.csv';           SortCols = @('TargetModified') }
     @{ Name = 'RecycleBin';     Pattern = 'FileDeletion\*RBCmd_Output.csv';               SortCols = @('DeletedOn') }
+    @{ Name = 'BrowserHistory'; Pattern = 'WebBrowsers\BrowsingHistory.csv';              SortCols = @('Visit Time') }
+    @{ Name = 'BrowserDownloads'; Pattern = 'WebBrowsers\BrowserDownloadsView.csv';       SortCols = @('Start Time') }
 )
 
 # Excel has no simple "sort by column name" call via COM, so each sheet is pre-sorted

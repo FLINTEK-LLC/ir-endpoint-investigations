@@ -49,6 +49,8 @@ $RequiredItems = @(
     @{ Name = 'Hindsight';             RelPath = 'hindsight.exe';                                  Type = 'File'; Group = 'Hindsight' }
     @{ Name = 'RegRipper';             RelPath = 'RegRipper\rip.exe';                               Type = 'File'; Group = 'RegRipper' }
     @{ Name = 'RegRipper plugins';     RelPath = 'RegRipper\plugins';                                Type = 'Dir';  Group = 'RegRipper' }
+    @{ Name = 'BrowsingHistoryView';   RelPath = 'BrowsingHistoryView.exe';                         Type = 'File'; Group = 'NirSoft' }
+    @{ Name = 'BrowserDownloadsView';  RelPath = 'BrowserDownloadsView.exe';                        Type = 'File'; Group = 'NirSoft' }
 )
 
 function Test-RequiredItem {
@@ -226,6 +228,24 @@ function Install-RegRipper {
     if (-not (Test-Path (Join-Path $dest 'plugins'))) { throw "plugins folder missing after clone/extract" }
 }
 
+function Install-NirSoftBrowserTools {
+    # Flat at Modules\bin, not a subfolder - these run directly from
+    # Get-BroaderBrowserHistory.ps1 (a post-processing script, not a KAPE module
+    # processor), which looks for them at $BinPath the same as every other tool here.
+    $urls = @{
+        'browsinghistoryview-x64.zip' = 'https://www.nirsoft.net/utils/browsinghistoryview-x64.zip'
+        'browserdownloadsview-x64.zip' = 'https://www.nirsoft.net/utils/browserdownloadsview-x64.zip'
+    }
+    foreach ($name in $urls.Keys) {
+        $zipFile = Join-Path $env:TEMP $name
+        Invoke-WebRequest -Uri $urls[$name] -Headers $Headers -OutFile $zipFile
+        Expand-ZipFlat -ZipPath $zipFile -Dest $BinPath
+        Remove-Item -LiteralPath $zipFile -Force -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path (Join-Path $BinPath 'BrowsingHistoryView.exe'))) { throw "BrowsingHistoryView.exe missing after download" }
+    if (-not (Test-Path (Join-Path $BinPath 'BrowserDownloadsView.exe'))) { throw "BrowserDownloadsView.exe missing after download" }
+}
+
 function Install-EZTools {
     # Despite the common name, the maintained repo lives under AndrewRathbun, not
     # EricZimmermann. The published release asset is a plain .ps1 (no zip), and the
@@ -263,6 +283,7 @@ function Invoke-Setup {
                 'Chainsaw'  { Install-Chainsaw;  $installed += 'Chainsaw' }
                 'Hindsight' { Install-Hindsight; $installed += 'Hindsight' }
                 'RegRipper' { Install-RegRipper; $installed += 'RegRipper' }
+                'NirSoft'   { Install-NirSoftBrowserTools; $installed += 'NirSoft' }
             }
         } catch {
             $failed += [pscustomobject]@{ Group = $group; Reason = $_.Exception.Message }
@@ -323,7 +344,7 @@ function Invoke-Update {
     }
 
     Write-Host ""
-    Write-Host "Hindsight and RegRipper have no automated update mechanism - re-run Setup to update them."
+    Write-Host "Hindsight, RegRipper, and the NirSoft browser tools have no automated update mechanism - re-run Setup to update them."
 }
 
 switch ($Mode) {

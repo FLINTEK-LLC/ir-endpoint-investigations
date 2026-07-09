@@ -108,6 +108,11 @@ if (-not $SkipTriagePostProcessing) {
     if ($LASTEXITCODE -ne 0) { Write-Host "Get-InterestingFiles.ps1 exited $LASTEXITCODE" -ForegroundColor Yellow }
     & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'Get-EvtxTriage.ps1') -ResultsPath $OutputPath
     if ($LASTEXITCODE -ne 0) { Write-Host "Get-EvtxTriage.ps1 exited $LASTEXITCODE" -ForegroundColor Yellow }
+    # Reads the raw uploads\ tree directly (not KAPE's parsed output), so it needs
+    # CollectionRoot/KapePath rather than -ResultsPath - see the script's own header
+    # for why this runs as a standalone step instead of a KAPE module processor.
+    & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'Get-BroaderBrowserHistory.ps1') -CollectionRoot $CollectionRoot -OutputPath (Join-Path $OutputPath 'WebBrowsers') -KapePath $KapePath
+    if ($LASTEXITCODE -ne 0) { Write-Host "Get-BroaderBrowserHistory.ps1 exited $LASTEXITCODE" -ForegroundColor Yellow }
     # Both of the below run after the two above so they can pick up
     # EvtxTriage.csv/InterestingFiles.csv. New-ReviewWorkbook.ps1 (a single merged .xlsx,
     # requires Excel installed) is the real fix for tab-switching between output folders;
