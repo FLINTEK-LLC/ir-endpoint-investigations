@@ -108,6 +108,15 @@ if (-not $SkipTriagePostProcessing) {
     if ($LASTEXITCODE -ne 0) { Write-Host "Get-InterestingFiles.ps1 exited $LASTEXITCODE" -ForegroundColor Yellow }
     & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'Get-EvtxTriage.ps1') -ResultsPath $OutputPath
     if ($LASTEXITCODE -ne 0) { Write-Host "Get-EvtxTriage.ps1 exited $LASTEXITCODE" -ForegroundColor Yellow }
+    # Both of the below run after the two above so they can pick up
+    # EvtxTriage.csv/InterestingFiles.csv. New-ReviewWorkbook.ps1 (a single merged .xlsx,
+    # requires Excel installed) is the real fix for tab-switching between output folders;
+    # New-ReviewBundle.ps1 (a folder of the same CSVs, no dependencies) is a portable
+    # fallback for a workstation without Excel and always runs regardless.
+    & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'New-ReviewBundle.ps1') -ResultsPath $OutputPath
+    if ($LASTEXITCODE -ne 0) { Write-Host "New-ReviewBundle.ps1 exited $LASTEXITCODE" -ForegroundColor Yellow }
+    & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'New-ReviewWorkbook.ps1') -ResultsPath $OutputPath
+    if ($LASTEXITCODE -ne 0) { Write-Host "New-ReviewWorkbook.ps1 exited $LASTEXITCODE (Excel may not be installed - the CSV bundle above still covers this)" -ForegroundColor Yellow }
 }
 
 exit $kapeExit

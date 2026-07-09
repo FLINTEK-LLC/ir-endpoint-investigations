@@ -157,9 +157,9 @@ Output is organized by KAPE's own artifact categories under
 | `EventLogs\` | EvtxECmd CSV, Chainsaw hunt output (rule + Sigma hits), Hayabusa Sigma timeline, plus `EvtxTriage.csv` (see below) |
 | `WebBrowsers\` | Hindsight browser history/artifacts (xlsx) |
 
-`Run-IRParse.ps1` also runs two fast triage passes automatically after every
-parse (skip with `-SkipTriagePostProcessing`, or run either standalone against
-existing results):
+`Run-IRParse.ps1` also runs four fast triage steps automatically after every
+parse (skip all of them with `-SkipTriagePostProcessing`, or run any one
+standalone against existing results):
 
 - **`FileSystem\InterestingFiles.csv`** ([`Get-InterestingFiles.ps1`](scripts/Get-InterestingFiles.ps1)) -
   MFT rows for high-signal extensions (`.exe`, `.ps1`, `.dll`, `.vbs`, `.zip`,
@@ -172,10 +172,21 @@ existing results):
   clearing) within the last 15 days by default. This is a starting point, not
   a replacement for the full EvtxECmd/Chainsaw/Hayabusa output - tune
   `-EventIds` for your environment.
+- **`ReviewWorkbook.xlsx`** ([`New-ReviewWorkbook.ps1`](scripts/New-ReviewWorkbook.ps1)) -
+  the two files above, plus Hayabusa, Chainsaw, Amcache, Prefetch, Shimcache,
+  LNK, and Recycle Bin output, merged into **one workbook, one worksheet per
+  artifact**, each sorted chronologically. This is the actual fix for
+  tab-switching between output folders during first-pass review. Requires
+  Excel installed on the workstation running the parse (uses COM automation);
+  skips itself with a clear message otherwise.
+- **`Review\`** ([`New-ReviewBundle.ps1`](scripts/New-ReviewBundle.ps1)) - the
+  same set of files as the workbook, copied (not merged) into one folder with
+  clear filenames. Always runs regardless of whether Excel is installed, as a
+  portable fallback.
 
-Both are extension/keyword-based first passes, not a substitute for the full
-timeline/registry/event-log review - treat them as "start here," not "this is
-everything."
+All four are extension/keyword-based first passes, not a substitute for the
+full timeline/registry/event-log review - treat them as "start here," not
+"this is everything."
 
 For deeper review, load the CSVs into **Timeline Explorer** for the
 MFT/USN/Prefetch/LNK/JumpList data, **Registry Explorer** for anything beyond
@@ -221,10 +232,15 @@ scripts/
   Deploy-Module.ps1          Just (re)deploys the module files onto a KAPE install -
                               no tool-fetching. Called by Setup-Workstation.ps1
                               internally; run it directly for a fast redeploy
-  Run-IRParse.ps1            Parses one collection, then runs the two triage
+  Run-IRParse.ps1            Parses one collection, then runs the four triage
                               scripts below automatically
   Get-InterestingFiles.ps1   Fast triage: recent high-signal files from the MFT
   Get-EvtxTriage.ps1         Fast triage: curated Event IDs within a date window
+  New-ReviewWorkbook.ps1     Merges the triage + highest-signal outputs into one
+                              ReviewWorkbook.xlsx (one worksheet per artifact) -
+                              requires Excel installed (COM automation)
+  New-ReviewBundle.ps1       Same outputs as above, copied into one Review\ folder
+                              instead of merged - no Excel required, always runs
 ```
 
 ## Updating and maintaining this module
@@ -266,11 +282,20 @@ Ideas for where this could go next, several inspired by
 [secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations)'s
 broader workflow:
 
-- **A consolidated per-host review workbook.** Right now output is a pile of
-  CSVs across ten category folders. A post-processing script that merges the
-  highest-signal outputs (Hayabusa/Chainsaw hits, EvtxECmd, Amcache, Prefetch,
-  browser history) into a single timestamp-sorted workbook per host would cut
-  down a lot of tab-switching during initial review.
+- ~~A consolidated per-host review workbook~~ - done, see
+  [`New-ReviewWorkbook.ps1`](scripts/New-ReviewWorkbook.ps1). A first attempt
+  used the `ImportExcel` PowerShell module specifically to avoid requiring
+  Excel on the analyst workstation, but hit a reproducible bug in the bundled
+  EPPlus 4.5.3.2 (worksheet writes failed deterministically after the 5th
+  sheet, regardless of row count, data content, or retries). Rebuilt on Excel
+  COM automation instead - the same approach
+  [secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations)'s
+  `rtw-script` uses - with prompts suppressed programmatically instead of
+  needing a click-through, and explicit COM object cleanup so it doesn't
+  leave orphaned `EXCEL.EXE` processes behind. Requires Excel installed;
+  [`New-ReviewBundle.ps1`](scripts/New-ReviewBundle.ps1) (a folder of the same
+  CSVs, no merge) remains as a dependency-free fallback and always runs
+  regardless of whether Excel is present.
 - **Live system state at collection time, not just file artifacts.** This
   project's `IR_Compound_Full.mkape` only parses what a
   `Windows.KapeFiles.Targets`-style collection captures - files on disk.

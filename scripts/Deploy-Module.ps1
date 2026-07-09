@@ -26,7 +26,9 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Manage-Tools.ps1') -Destination
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Run-IRParse.ps1') -Destination $binDest -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Get-InterestingFiles.ps1') -Destination $binDest -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Get-EvtxTriage.ps1') -Destination $binDest -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'New-ReviewBundle.ps1') -Destination $binDest -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'New-ReviewWorkbook.ps1') -Destination $binDest -Force
 Get-ChildItem -LiteralPath (Join-Path $projectRoot 'Modules\!IR') -Filter 'IR_*.mkape' | Copy-Item -Destination $localDest -Force
 
-Write-Host "Deployed Manage-Tools.ps1 / Run-IRParse.ps1 / Get-InterestingFiles.ps1 / Get-EvtxTriage.ps1 to $binDest"
+Write-Host "Deployed Manage-Tools.ps1 / Run-IRParse.ps1 / Get-InterestingFiles.ps1 / Get-EvtxTriage.ps1 / New-ReviewBundle.ps1 / New-ReviewWorkbook.ps1 to $binDest"
 Write-Host "Deployed IR_00_ToolVerify.mkape / IR_Compound_Full.mkape to $localDest"
