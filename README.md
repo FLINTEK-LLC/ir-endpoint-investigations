@@ -20,6 +20,10 @@ focuses specifically on the KAPE parsing side as a Compound Module; see the
 Roadmap section below for ideas borrowed from their broader workflow that
 aren't implemented here yet.
 
+This README covers running the tooling. For what to actually do with the
+output - where to start, how to pivot from a detection into a full timeline
+- see [METHODOLOGY.md](METHODOLOGY.md).
+
 ## What it collects and parses
 
 | Artifact | Tool(s) |
@@ -391,12 +395,11 @@ broader workflow:
 - ~~Multi-host / case-level orchestration~~ - done, see
   [`Start-CaseParse.ps1`](scripts/Start-CaseParse.ps1) and "Case-level /
   multi-host use" above.
-- **A short investigation-methodology guide.** This README documents how to
-  run the tooling; it doesn't yet document how to actually work a case with
-  the output - where to look first, how to pivot from a high-confidence
-  Hayabusa/Chainsaw hit into surrounding MFT/Registry/Amcache/Prefetch
-  activity to scope what happened. Worth adding once the workflow above
-  stabilizes.
+- ~~A short investigation-methodology guide~~ - done, see
+  [METHODOLOGY.md](METHODOLOGY.md): where to start, how to pivot from a
+  detection into surrounding MFT/Registry/Amcache/Prefetch/browser activity
+  to scope what happened, and what to check when there's no detection to
+  start from.
 
 ## Contributing
 
