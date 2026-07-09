@@ -101,6 +101,13 @@ how to drive it from the KAPE GUI instead.
 Run the first one before any significant investigation - detection rules are
 a living data set and meaningfully improve between cases.
 
+**Prefer a menu to remembering flags?** `.\scripts\Start-IRConsole.ps1` wraps
+every script above (setup, verify, update, deploy, parse one host, parse a
+case, rebuild the review output) in a numbered menu that prompts for
+whatever a given action needs. It's a thin front end, not different logic -
+every script it calls is still fully usable directly with flags for
+automation/scripting, this is just the walk-up-and-use path.
+
 ## Using it
 
 ### Collection format
@@ -270,6 +277,8 @@ Modules/!IR/
   IR_Compound_Full.mkape     The module you actually select in gKAPE - references
                               stock KAPE modules + IR_00_ToolVerify
 scripts/
+  Start-IRConsole.ps1        Menu-driven front end for every script below - prompts
+                              for whatever an action needs, no flags to remember
   Manage-Tools.ps1           Verify / Setup / Update the KAPE toolchain (EZ Tools,
                               Hayabusa, Chainsaw, Hindsight, RegRipper, NirSoft
                               browser tools)
