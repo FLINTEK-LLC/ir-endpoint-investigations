@@ -12,6 +12,14 @@ format contains. There's very little custom code here on purpose - almost
 everything is a reference to modules KAPE already ships, wired together and
 kept up to date by two support scripts.
 
+The overall approach - Velociraptor for collection, KAPE for parsing, Hayabusa
+for detection - draws heavily on
+[secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations),
+a great reference for this style of rapid tactical triage. This project
+focuses specifically on the KAPE parsing side as a Compound Module; see the
+Roadmap section below for ideas borrowed from their broader workflow that
+aren't implemented here yet.
+
 ## What it collects and parses
 
 | Artifact | Tool(s) |
@@ -228,6 +236,54 @@ fits. A few things worth knowing if you do:
   you via `kape.exe --guid`), `Version`, and `Author` fields.
 - Compound Module references resolve recursively, so nesting stock compounds
   inside your own compound works fine.
+
+## Roadmap
+
+Ideas for where this could go next, several inspired by
+[secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations)'s
+broader workflow:
+
+- **A consolidated per-host review workbook.** Right now output is a pile of
+  CSVs across ten category folders. A post-processing script that merges the
+  highest-signal outputs (Hayabusa/Chainsaw hits, EvtxECmd, Amcache, Prefetch,
+  browser history) into a single timestamp-sorted workbook per host would cut
+  down a lot of tab-switching during initial review.
+- **Live system state at collection time, not just file artifacts.** This
+  project's `IR_Compound_Full.mkape` only parses what a
+  `Windows.KapeFiles.Targets`-style collection captures - files on disk.
+  Pairing the collector with Velociraptor's `Windows.Network.NetstatEnriched`,
+  `Windows.System.Pslist`, `Windows.Sysinternals.Autoruns`,
+  `Windows.System.Services`, and `Windows.System.DNSCache` artifacts would
+  capture running-process/network/persistence state that file-based triage
+  alone misses, if the collector is still live when it runs.
+- **A "recently modified executable" hunt at collection time.** A custom
+  Velociraptor artifact that hashes recently-modified executables in common
+  writable directories (`Users`, `ProgramData`, `Windows\Temp`) is a cheap,
+  high-value way to surface likely droppers before deep analysis even starts.
+- **Broader browser coverage.** Hindsight only covers Chromium-based browsers.
+  Adding NirSoft's BrowsingHistoryView/WebBrowserDownloads (or an equivalent)
+  would pick up Firefox and legacy Edge/IE history too.
+- **A fast, noise-reduced EVTX triage pass.** In addition to the full
+  EvtxECmd/Chainsaw/Hayabusa output, a lightweight first-pass filter (a
+  configurable date window plus a curated set of high-value event IDs -
+  logons, account changes, scheduled tasks, service installs, PowerShell
+  execution) would give analysts something to start with immediately, before
+  digging into the full parsed output.
+- **An "interesting files" MFT view.** A quick post-processing step that pulls
+  just the MFT rows matching high-signal extensions (`.exe`, `.ps1`, `.dll`,
+  `.vbs`, `.zip`, `.7z`, etc.) would surface likely-dropped files fast, ahead
+  of a full timeline review.
+- **Multi-host / case-level orchestration.** `Run-IRParse.ps1` handles one
+  collection at a time. A wrapper that iterates every host collected under a
+  case folder (prompting for a case name, running the module against each,
+  and optionally rolling results up for cross-host comparison) would help on
+  larger engagements.
+- **A short investigation-methodology guide.** This README documents how to
+  run the tooling; it doesn't yet document how to actually work a case with
+  the output - where to look first, how to pivot from a high-confidence
+  Hayabusa/Chainsaw hit into surrounding MFT/Registry/Amcache/Prefetch
+  activity to scope what happened. Worth adding once the workflow above
+  stabilizes.
 
 ## Contributing
 
