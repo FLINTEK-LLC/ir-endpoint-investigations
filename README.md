@@ -217,6 +217,38 @@ collector produces beyond "point me at the right starting folder" - which is
 exactly why `-CollectionRoot\uploads` works as a single, fixed source
 directory for the whole run.
 
+## Case-level / multi-host use
+
+`Run-IRParse.ps1` handles one host at a time. For an engagement spanning
+multiple endpoints, [`Start-CaseParse.ps1`](scripts/Start-CaseParse.ps1) runs
+it against every host collection under one case folder and rolls up the
+fast-triage output across hosts:
+
+```powershell
+.\scripts\Start-CaseParse.ps1 -CaseRoot "D:\Cases\2026-07-INC1234"
+```
+
+Lay out the case folder with one subfolder per host, each an extracted
+collection with its own `uploads\` folder (name each subfolder after the
+actual hostname - that name becomes the label in the rollup):
+
+```
+D:\Cases\2026-07-INC1234\
+  HOST01\uploads\...
+  HOST02\uploads\...
+  HOST03\uploads\...
+```
+
+After every host finishes, it writes `CaseRollup\All-Hosts-EvtxTriage.csv`
+and `CaseRollup\All-Hosts-InterestingFiles.csv` - each host's fast-triage
+output combined into one chronologically-sorted, case-wide view with a
+`SourceHost` column, for spotting the same activity landing on multiple
+endpoints (a scheduled task or account change appearing around the same time
+on several hosts, for example). This intentionally only rolls up the
+already-curated triage CSVs, not the full per-host output - that would be
+enormous across many hosts - so it's still worth reviewing each host's own
+`ReviewWorkbook.xlsx`/`Review\` individually.
+
 ## Repository layout
 
 ```
@@ -241,6 +273,8 @@ scripts/
                               requires Excel installed (COM automation)
   New-ReviewBundle.ps1       Same outputs as above, copied into one Review\ folder
                               instead of merged - no Excel required, always runs
+  Start-CaseParse.ps1        Runs Run-IRParse.ps1 across every host under one case
+                              folder, then rolls up fast-triage output across hosts
 ```
 
 ## Updating and maintaining this module
@@ -313,11 +347,9 @@ broader workflow:
   would pick up Firefox and legacy Edge/IE history too.
 - ~~A fast, noise-reduced EVTX triage pass~~ - done, see `Get-EvtxTriage.ps1`.
 - ~~An "interesting files" MFT view~~ - done, see `Get-InterestingFiles.ps1`.
-- **Multi-host / case-level orchestration.** `Run-IRParse.ps1` handles one
-  collection at a time. A wrapper that iterates every host collected under a
-  case folder (prompting for a case name, running the module against each,
-  and optionally rolling results up for cross-host comparison) would help on
-  larger engagements.
+- ~~Multi-host / case-level orchestration~~ - done, see
+  [`Start-CaseParse.ps1`](scripts/Start-CaseParse.ps1) and "Case-level /
+  multi-host use" above.
 - **A short investigation-methodology guide.** This README documents how to
   run the tooling; it doesn't yet document how to actually work a case with
   the output - where to look first, how to pivot from a high-confidence

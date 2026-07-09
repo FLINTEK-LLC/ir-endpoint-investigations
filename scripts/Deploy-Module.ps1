@@ -22,13 +22,13 @@ $localDest = Join-Path $KapePath 'Modules\!Local'
 New-Item -ItemType Directory -Path $binDest -Force -ErrorAction SilentlyContinue | Out-Null
 New-Item -ItemType Directory -Path $localDest -Force -ErrorAction SilentlyContinue | Out-Null
 
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Manage-Tools.ps1') -Destination $binDest -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Run-IRParse.ps1') -Destination $binDest -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Get-InterestingFiles.ps1') -Destination $binDest -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Get-EvtxTriage.ps1') -Destination $binDest -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'New-ReviewBundle.ps1') -Destination $binDest -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'New-ReviewWorkbook.ps1') -Destination $binDest -Force
+# Every script in this folder except Setup-Workstation.ps1 and this script itself runs
+# on the KAPE install, not just the analyst's checkout - deployed in bulk so a new
+# script added here doesn't also require a matching edit here.
+$deployedScripts = Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' |
+    Where-Object { $_.Name -notin @('Deploy-Module.ps1', 'Setup-Workstation.ps1') }
+$deployedScripts | Copy-Item -Destination $binDest -Force
 Get-ChildItem -LiteralPath (Join-Path $projectRoot 'Modules\!IR') -Filter 'IR_*.mkape' | Copy-Item -Destination $localDest -Force
 
-Write-Host "Deployed Manage-Tools.ps1 / Run-IRParse.ps1 / Get-InterestingFiles.ps1 / Get-EvtxTriage.ps1 / New-ReviewBundle.ps1 / New-ReviewWorkbook.ps1 to $binDest"
+Write-Host "Deployed $($deployedScripts.Name -join ', ') to $binDest"
 Write-Host "Deployed IR_00_ToolVerify.mkape / IR_Compound_Full.mkape to $localDest"
