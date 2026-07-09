@@ -10,10 +10,16 @@ param(
     # Skip the automatic Get-InterestingFiles.ps1 / Get-EvtxTriage.ps1 post-processing
     # pass - use this if you only want KAPE's raw output, or want to run those scripts
     # yourself with non-default parameters.
-    [switch]$SkipTriagePostProcessing
+    [switch]$SkipTriagePostProcessing,
+
+    # Opens the finished ReviewWorkbook.xlsx automatically. Off by default so
+    # Start-CaseParse.ps1 doesn't pop a window per host across a multi-host run -
+    # Start-IRConsole.ps1's single-host menu option turns it on by default instead.
+    [switch]$OpenWhenDone
 )
 
 $ErrorActionPreference = 'Stop'
+$startTime = Get-Date
 
 if (-not $KapePath) {
     $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -38,6 +44,26 @@ if (-not $OutputPath) {
     # not in some separate location the analyst has to remember.
     $OutputPath = Join-Path $CollectionRoot 'results'
 }
+
+# Prefer the hostname Velociraptor itself recorded (client_info.json, written at the
+# collection root by every Windows.KapeFiles.Targets collection) over the folder name -
+# an analyst can name the extracted-collection folder anything, but this field is always
+# accurate. Falls back to the folder name if that file is missing/unparsable (e.g. a
+# collection format other than this project's target one). Used to keep multiple hosts'
+# ReviewWorkbook.xlsx/Review\ output distinguishable when open side by side.
+$hostLabel = $null
+$clientInfoPath = Join-Path $CollectionRoot 'client_info.json'
+if (Test-Path -LiteralPath $clientInfoPath) {
+    try {
+        $hostLabel = (Get-Content -LiteralPath $clientInfoPath -Raw | ConvertFrom-Json).Hostname
+    } catch { }
+}
+if ([string]::IsNullOrWhiteSpace($hostLabel)) {
+    $hostLabel = Split-Path -Leaf $CollectionRoot
+}
+$hostLabel = ($hostLabel -replace '[\\/:*?"<>|]', '_')
+$dateLabel = Get-Date -Format 'yyyyMMdd'
+$reviewWorkbookPath = Join-Path $OutputPath "${hostLabel}_${dateLabel}_ReviewWorkbook.xlsx"
 
 # --- Verify tools ---
 $verifyScript = Join-Path $KapePath 'Modules\bin\Manage-Tools.ps1'
@@ -118,10 +144,62 @@ if (-not $SkipTriagePostProcessing) {
     # requires Excel installed) is the real fix for tab-switching between output folders;
     # New-ReviewBundle.ps1 (a folder of the same CSVs, no dependencies) is a portable
     # fallback for a workstation without Excel and always runs regardless.
-    & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'New-ReviewBundle.ps1') -ResultsPath $OutputPath
+    & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'New-ReviewBundle.ps1') -ResultsPath $OutputPath -FilePrefix "${hostLabel}_${dateLabel}_"
     if ($LASTEXITCODE -ne 0) { Write-Host "New-ReviewBundle.ps1 exited $LASTEXITCODE" -ForegroundColor Yellow }
-    & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'New-ReviewWorkbook.ps1') -ResultsPath $OutputPath
-    if ($LASTEXITCODE -ne 0) { Write-Host "New-ReviewWorkbook.ps1 exited $LASTEXITCODE (Excel may not be installed - the CSV bundle above still covers this)" -ForegroundColor Yellow }
+    & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File (Join-Path $scriptDir 'New-ReviewWorkbook.ps1') -ResultsPath $OutputPath -OutputFile $reviewWorkbookPath
+    $reviewWorkbookExit = $LASTEXITCODE
+    if ($reviewWorkbookExit -ne 0) { Write-Host "New-ReviewWorkbook.ps1 exited $reviewWorkbookExit (Excel may not be installed - the CSV bundle above still covers this)" -ForegroundColor Yellow }
+}
+
+# --- Triage summary ---
+# A quick "how hot does this host look" signal before opening the full workbook -
+# row counts, not conclusions. Runs regardless of -SkipTriagePostProcessing, since
+# Chainsaw/Hayabusa's own raw output comes straight from KAPE, not the triage scripts.
+function Get-CsvRowCount {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    return ([System.IO.File]::ReadLines($Path) | Measure-Object).Count - 1
+}
+$triageCounts = [ordered]@{
+    'Chainsaw Sigma hits'    = Get-CsvRowCount (Join-Path $OutputPath 'EventLogs\sigma.csv')
+    'Hayabusa hits'          = Get-CsvRowCount (Join-Path $OutputPath 'EventLogs\hayabusa_events_offline.csv')
+    'EVTX triage rows'       = Get-CsvRowCount (Join-Path $OutputPath 'EventLogs\EvtxTriage.csv')
+    'Interesting files'      = Get-CsvRowCount (Join-Path $OutputPath 'FileSystem\InterestingFiles.csv')
+    'Browser history rows'   = Get-CsvRowCount (Join-Path $OutputPath 'WebBrowsers\BrowsingHistory.csv')
+    'Browser download rows'  = Get-CsvRowCount (Join-Path $OutputPath 'WebBrowsers\BrowserDownloadsView.csv')
+}
+Write-Host ""
+Write-Host "=== Triage summary ($hostLabel) ==="
+foreach ($key in $triageCounts.Keys) {
+    $val = if ($null -eq $triageCounts[$key]) { 'n/a' } else { $triageCounts[$key] }
+    Write-Host ("{0,-24} {1}" -f $key, $val)
+}
+
+# --- Run log ---
+# Appended, not overwritten, so re-running against the same collection keeps a
+# history - parameters, timing, and the triage summary above, for case-note/
+# chain-of-custody documentation. Deliberately a small structured summary, not a
+# full console transcript.
+$endTime = Get-Date
+$logLines = @(
+    "=== Run-IRParse.ps1 - $($startTime.ToString('u')) ==="
+    "Host: $hostLabel"
+    "CollectionRoot: $CollectionRoot"
+    "OutputPath: $OutputPath"
+    "KapePath: $KapePath"
+    "SkipTriagePostProcessing: $($SkipTriagePostProcessing.IsPresent)"
+    "Tool verification: PASSED"
+    "Started:  $($startTime.ToString('u'))"
+    "Finished: $($endTime.ToString('u')) (duration: $([Math]::Round(($endTime - $startTime).TotalMinutes, 1)) min)"
+    "KAPE exit code: $kapeExit"
+    "Triage summary:"
+) + ($triageCounts.Keys | ForEach-Object {
+    "  ${_}: $(if ($null -eq $triageCounts[$_]) { 'n/a' } else { $triageCounts[$_] })"
+}) + @('')
+Add-Content -LiteralPath (Join-Path $OutputPath 'RunLog.txt') -Value $logLines
+
+if ($OpenWhenDone -and $reviewWorkbookExit -eq 0 -and (Test-Path -LiteralPath $reviewWorkbookPath)) {
+    Invoke-Item -LiteralPath $reviewWorkbookPath
 }
 
 exit $kapeExit

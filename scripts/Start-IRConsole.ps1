@@ -139,6 +139,10 @@ while ($true) {
                 $skip = Read-YesNo -Prompt "Skip triage post-processing (workbook/bundle/browser history)?" -Default $false
                 $scriptArgs = @('-CollectionRoot', $collectionRoot, '-OutputPath', $outputPath, '-KapePath', $script:KapePath)
                 if ($skip) { $scriptArgs += '-SkipTriagePostProcessing' }
+                if (-not $skip) {
+                    $openWhenDone = Read-YesNo -Prompt "Open the review workbook when finished?" -Default $true
+                    if ($openWhenDone) { $scriptArgs += '-OpenWhenDone' }
+                }
                 Invoke-DeployedScript 'Run-IRParse.ps1' $scriptArgs
             } else {
                 Write-Host "Cancelled." -ForegroundColor Yellow

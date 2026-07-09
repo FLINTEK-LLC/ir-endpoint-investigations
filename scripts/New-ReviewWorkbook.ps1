@@ -1,8 +1,10 @@
 <#
 .SYNOPSIS
     Merges the highest-signal parsed outputs for one host into a single
-    review workbook - one worksheet per artifact, each sorted chronologically
-    - so first-pass review is one file with tabs, not ten folders of CSVs.
+    review workbook - one worksheet per artifact, each sorted chronologically,
+    with AutoFilter on, a frozen header row, and autofit columns - so
+    first-pass review is one file with tabs, not ten folders of CSVs, and
+    every sheet is immediately filterable without a manual setup step.
 
 .DESCRIPTION
     Uses Excel COM automation (requires Microsoft Excel installed on this
@@ -109,6 +111,17 @@ try {
             $sourceBook.Close($false)
             [System.Runtime.InteropServices.Marshal]::ReleaseComObject($sourceSheet) | Out-Null
             [System.Runtime.InteropServices.Marshal]::ReleaseComObject($sourceBook) | Out-Null
+
+            # AutoFilter + a frozen header row + autofit columns, so a sheet is usable
+            # the moment it's opened instead of every review session starting with the
+            # same manual "turn on filters" step.
+            $newSheet.Rows.Item(1).Font.Bold = $true
+            $newSheet.UsedRange.AutoFilter() | Out-Null
+            $newSheet.Activate()
+            $newSheet.Range('A2').Select() | Out-Null
+            $excel.ActiveWindow.FreezePanes = $true
+            $newSheet.UsedRange.Columns.AutoFit() | Out-Null
+
             Write-Host "Added sheet $($item.Name)"
         }
 

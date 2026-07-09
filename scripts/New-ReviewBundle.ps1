@@ -31,7 +31,13 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ResultsPath,
 
-    [string]$ReviewFolder
+    [string]$ReviewFolder,
+
+    # Prepended to every destination filename (e.g. "HOST01_20260709_") - lets
+    # files stay distinguishable when several hosts' Review\ folders are open
+    # side by side, since the plain names (Triage-EVTX.csv, etc.) are otherwise
+    # identical across hosts.
+    [string]$FilePrefix
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,7 +77,7 @@ foreach ($item in $items) {
         } else {
             $item.Name
         }
-        Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $ReviewFolder $destName) -Force
+        Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $ReviewFolder "$FilePrefix$destName") -Force
         $includedCount++
     }
 }

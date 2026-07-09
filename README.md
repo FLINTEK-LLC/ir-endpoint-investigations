@@ -200,21 +200,37 @@ standalone against existing results):
   the other triage steps this reads the raw `uploads\` tree directly rather
   than KAPE's parsed output, since it needs to locate the actual `Users`
   folder first.
-- **`ReviewWorkbook.xlsx`** ([`New-ReviewWorkbook.ps1`](scripts/New-ReviewWorkbook.ps1)) -
+- **`<Host>_<Date>_ReviewWorkbook.xlsx`** ([`New-ReviewWorkbook.ps1`](scripts/New-ReviewWorkbook.ps1)) -
   the files above, plus Hayabusa, Chainsaw, Amcache, Prefetch, Shimcache,
   LNK, and Recycle Bin output, merged into **one workbook, one worksheet per
-  artifact**, each sorted chronologically. This is the actual fix for
-  tab-switching between output folders during first-pass review. Requires
-  Excel installed on the workstation running the parse (uses COM automation);
-  skips itself with a clear message otherwise.
+  artifact**, each sorted chronologically, with AutoFilter on, the header row
+  frozen, and columns autofit - every sheet is immediately filterable, no
+  manual setup step. This is the actual fix for tab-switching between output
+  folders during first-pass review. Requires Excel installed on the
+  workstation running the parse (uses COM automation); skips itself with a
+  clear message otherwise. `<Host>` comes from the hostname Velociraptor
+  itself recorded at collection time (`client_info.json`), not the collection
+  folder's name, so it's accurate even if an analyst renamed the folder -
+  this keeps multiple hosts' workbooks distinguishable when several are open
+  at once. Pass `-OpenWhenDone` to `Run-IRParse.ps1` to have it open
+  automatically when a single-host parse finishes (off by default so
+  `Start-CaseParse.ps1` doesn't pop a window per host).
 - **`Review\`** ([`New-ReviewBundle.ps1`](scripts/New-ReviewBundle.ps1)) - the
   same set of files as the workbook, copied (not merged) into one folder with
-  clear filenames. Always runs regardless of whether Excel is installed, as a
-  portable fallback.
+  clear, `<Host>_<Date>_`-prefixed filenames. Always runs regardless of
+  whether Excel is installed, as a portable fallback.
 
 All five are extension/keyword-based first passes, not a substitute for the
 full timeline/registry/event-log review - treat them as "start here," not
 "this is everything."
+
+`Run-IRParse.ps1` finishes with a **triage summary** - row counts for
+Chainsaw Sigma hits, Hayabusa hits, curated EVTX rows, interesting files, and
+browser history/downloads - printed to the console and appended to
+**`RunLog.txt`** alongside the parameters used and start/end timestamps, so
+you know how "hot" a host looks before opening the workbook, and have a
+record of exactly what was run for case notes. `RunLog.txt` is appended to,
+not overwritten, so re-running against the same collection keeps a history.
 
 For deeper review, load the CSVs into **Timeline Explorer** for the
 MFT/USN/Prefetch/LNK/JumpList data, **Registry Explorer** for anything beyond
