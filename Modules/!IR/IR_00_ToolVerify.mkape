@@ -1,0 +1,12 @@
+Id: 3102af39-d6f6-4ef7-a6bf-50ba05598d71
+Version: 1.0
+Author: ir-endpoint-investigations
+Description: 'Verifies all required IR triage tools are present before any other IR_ module runs.'
+Category: IR
+ExportFormat: txt
+Processors:
+    -
+        Executable: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+        CommandLine: -ExecutionPolicy Bypass -NonInteractive -File "%kapeDirectory%\Modules\bin\Manage-Tools.ps1" -KapePath "%kapeDirectory%" -Mode Verify
+        ExportFormat: txt
+        ExportFile: ToolVerify.txt

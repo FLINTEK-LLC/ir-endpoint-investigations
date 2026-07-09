@@ -1,0 +1,98 @@
+Description: 'IR Compound Full - runs tool verification plus the official/stock KAPE modules that cover every artifact confirmed present in a Windows.KapeFiles.Targets (_KapeTriage/_SANS_Triage) Velociraptor collection, instead of maintaining bespoke duplicates of tools KAPE already ships modules for. Uses FileMask/%sourceFile% and tool-internal recursive -d scanning wherever available, so it does not need to know the exact device-root folder name Velociraptor encodes into uploads\ntfs\<device> / uploads\auto\<device> - point msource at <CollectionRoot>\uploads directly (Run-IRParse.ps1 does this for you). Output lands in each referenced module''s own native Category subfolder (FileSystem, Registry, ProgramExecution, EventLogs, FileFolderAccess, WebBrowsers, FileDeletion, SRUMDatabase, SUMDatabase), not a custom numbered scheme.'
+Category: IR
+Author: ir-endpoint-investigations
+Version: 2.0
+Id: 6f1a2b3c-4d5e-4f60-8a1b-2c3d4e5f6a7b
+BinaryUrl: https://github.com/EricZimmerman/KAPE
+ExportFormat: csv
+Processors:
+    -
+        Executable: IR_00_ToolVerify.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: MFTECmd.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: RECmd_AllBatchFiles.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: SBECmd.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: AppCompatCacheParser.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: AmcacheParser.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: PECmd.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: LECmd.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: JLECmd.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: SrumECmd.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: SumECmd.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: RBCmd.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: EvtxECmd.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: WxTCmd.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: ObsidianForensics_Hindsight.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: RegRipper.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: Chainsaw.mkape
+        CommandLine: ""
+        ExportFormat: ""
+    -
+        Executable: hayabusa_OfflineEventLogs.mkape
+        CommandLine: ""
+        ExportFormat: ""
+
+# Documentation
+# This is a KAPE Compound Module, and Compound Module references resolve recursively -
+# MFTECmd.mkape and RegRipper.mkape are themselves stock Compound Modules referencing
+# further leaf modules (confirmed working via a direct nested-resolution test).
+# See Modules\CompoundModuleGuide.guide in the KAPE install for the mechanism itself.
+#
+# Deliberately NOT using:
+# - PowerShell_SrumECmd_SRUM-RepairAndParse.mkape: would auto-repair a dirty SRUDB.dat,
+#   but its underlying SRUM-Repair.ps1 dismisses an esentutl /p GUI warning dialog via
+#   SendKeys/AppActivate, which can hang indefinitely in an unattended/non-interactive
+#   run if the popup can't be found/activated. If a future collection's SRUM database
+#   is dirty, repair it manually (esentutl /r then /p) and re-run SrumECmd in isolation.
+# - PowerShell_MFTECmd_J-MFTParsing.mkape: cross-references $MFT and $J to populate
+#   ParentPath in the USN output (a genuinely better result), but its search is
+#   hardcoded to a file literally named "$J" - Velociraptor collects the USN journal as
+#   "$UsnJrnl%3A$J", so this script would never find it. MFTECmd.mkape's own $J
+#   sub-module already accounts for the Velociraptor naming in its FileMask.

@@ -1,0 +1,5 @@
+# Local test/run artifacts
+results/
+*.log
+Thumbs.db
+desktop.ini
