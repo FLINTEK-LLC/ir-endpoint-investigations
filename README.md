@@ -12,13 +12,21 @@ format contains. There's very little custom code here on purpose - almost
 everything is a reference to modules KAPE already ships, wired together and
 kept up to date by two support scripts.
 
-The overall approach - Velociraptor for collection, KAPE for parsing, Hayabusa
-for detection - draws heavily on
-[secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations),
-a great reference for this style of rapid tactical triage. This project
-focuses specifically on the KAPE parsing side as a Compound Module; see the
-Roadmap section below for ideas borrowed from their broader workflow that
-aren't implemented here yet.
+This workflow was heavily inspired by **Patterson Cake** (Director of
+Incident Response at Black Hills Information Security) and his "Rapid
+Endpoint Investigations" methodology - the overall approach here
+(Velociraptor for collection, KAPE for parsing, Hayabusa for detection)
+draws directly on it. His
+[secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations)
+repo is the reference implementation this project's KAPE parsing side was
+built from; see the Roadmap section below for ideas borrowed from his
+broader workflow that aren't implemented here yet. If you want to go deeper
+than this README, his
+[Antisyphon Training course on Rapid Endpoint Investigations](https://www.antisyphontraining.com/product/workshop-rapid-endpoint-investigations-with-patterson-cake/)
+and the free
+[BHIS hands-on IR workshop](https://www.blackhillsinfosec.com/event/4-hour-hands-on-ir-workshop-rapid-windows-endpoint-triage-w-patterson-cake/)
+he runs are both worth your time - this repo only covers a slice of what he
+teaches.
 
 This README covers running the tooling. For what to actually do with the
 output - where to start, how to pivot from a detection into a full timeline
@@ -360,9 +368,9 @@ fits. A few things worth knowing if you do:
 
 ## Roadmap
 
-Ideas for where this could go next, several inspired by
-[secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations)'s
-broader workflow:
+Ideas for where this could go next, several inspired by Patterson Cake's
+[secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations)
+and his broader Rapid Endpoint Investigations workflow:
 
 - ~~A consolidated per-host review workbook~~ - done, see
   [`New-ReviewWorkbook.ps1`](scripts/New-ReviewWorkbook.ps1). A first attempt
