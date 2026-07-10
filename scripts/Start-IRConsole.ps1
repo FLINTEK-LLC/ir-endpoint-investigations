@@ -133,11 +133,19 @@ while ($true) {
             Wait-ForEnter
         }
         '6' {
-            $collectionRoot = Read-Required -Prompt "Collection root (extracted Velociraptor collection folder)"
+            $collectionRoot = Read-Required -Prompt "Collection root (extracted collection folder, or a collection .zip)"
             if ($collectionRoot) {
-                $outputPath = Read-Default -Prompt "Output path" -Default "$collectionRoot\results"
+                # A zip's real output path depends on where it gets extracted (next to
+                # itself by default) - only suggest the naive <root>\results default for
+                # an already-extracted folder; leave it blank for a zip and let
+                # Run-IRParse.ps1's own default (relative to its resolved extraction
+                # path) apply.
+                $isZip = $collectionRoot -match '\.zip$'
+                $suggestedOutput = if ($isZip) { '' } else { "$collectionRoot\results" }
+                $outputPath = Read-Default -Prompt "Output path (blank = default)" -Default $suggestedOutput
                 $skip = Read-YesNo -Prompt "Skip triage post-processing (workbook/bundle/browser history)?" -Default $false
-                $scriptArgs = @('-CollectionRoot', $collectionRoot, '-OutputPath', $outputPath, '-KapePath', $script:KapePath)
+                $scriptArgs = @('-CollectionRoot', $collectionRoot, '-KapePath', $script:KapePath)
+                if ($outputPath) { $scriptArgs += @('-OutputPath', $outputPath) }
                 if ($skip) { $scriptArgs += '-SkipTriagePostProcessing' }
                 if (-not $skip) {
                     $openWhenDone = Read-YesNo -Prompt "Open the review workbook when finished?" -Default $true
@@ -150,7 +158,7 @@ while ($true) {
             Wait-ForEnter
         }
         '7' {
-            $caseRoot = Read-Required -Prompt "Case root (folder with one subfolder per host)"
+            $caseRoot = Read-Required -Prompt "Case root (folder with one subfolder or .zip per host)"
             if ($caseRoot) {
                 $skip = Read-YesNo -Prompt "Skip triage post-processing / cross-host rollup?" -Default $false
                 $scriptArgs = @('-CaseRoot', $caseRoot, '-KapePath', $script:KapePath)

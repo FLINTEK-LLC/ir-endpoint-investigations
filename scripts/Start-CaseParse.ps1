@@ -6,21 +6,26 @@
     task or account change landing on several hosts around the same time).
 
 .DESCRIPTION
-    Point this at a folder containing one subfolder per host - each
-    subfolder should itself be an extracted Velociraptor collection (i.e.
-    contains its own `uploads\` folder), the same thing you'd otherwise pass
-    to Run-IRParse.ps1 -CollectionRoot one at a time:
+    Point this at a folder containing one host collection per entry - each
+    entry is either a subfolder that's itself an extracted Velociraptor
+    collection (contains its own `uploads\` folder), or a collection `.zip`
+    straight off the collector, the same either way you'd otherwise pass to
+    Run-IRParse.ps1 -CollectionRoot one at a time. Drop zips in as you
+    receive them - no need to extract each one yourself first:
 
         D:\Cases\2026-07-INC1234\
           HOST01\uploads\...
-          HOST02\uploads\...
-          HOST03\uploads\...
+          HOST02.zip
+          HOST03.zip
 
-    Each host subfolder's name is used as its label in the rollup - name
-    them after the actual hostnames.
+    A zip is extracted next to itself (same as Run-IRParse.ps1's own
+    default), reused on later runs, and its label in the rollup/case summary
+    is its filename without `.zip`. An already-extracted subfolder's label is
+    just its folder name - name folders after the actual hostnames.
 
 .PARAMETER CaseRoot
-    Folder containing one subfolder per host collection.
+    Folder containing one host collection per entry - an extracted-collection
+    subfolder, a collection .zip, or a mix of both.
 
 .PARAMETER KapePath
     Passed through to Run-IRParse.ps1 for each host. Defaults to
@@ -46,34 +51,61 @@ $ErrorActionPreference = 'Stop'
 $CaseRoot = (Resolve-Path -LiteralPath $CaseRoot).Path
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-$hostDirs = Get-ChildItem -LiteralPath $CaseRoot -Directory | Where-Object {
-    Test-Path -LiteralPath (Join-Path $_.FullName 'uploads') -PathType Container
+function Resolve-HostCollectionRoot {
+    # Mirrors Run-IRParse.ps1's own default zip-extraction path/flatten resolution,
+    # so the rollup step below can find <extracted>\results\... for a zip-based host
+    # without re-extracting or having Run-IRParse.ps1 report its resolved path back.
+    param([string]$Path)
+    if ((Get-Item -LiteralPath $Path).PSIsContainer) { return $Path }
+    $extractPath = Join-Path (Split-Path -Parent $Path) ([IO.Path]::GetFileNameWithoutExtension($Path))
+    if (Test-Path -LiteralPath (Join-Path $extractPath 'uploads') -PathType Container) { return $extractPath }
+    $wrapper = Get-ChildItem -LiteralPath $extractPath -Directory -ErrorAction SilentlyContinue
+    if ($wrapper.Count -eq 1 -and (Test-Path -LiteralPath (Join-Path $wrapper[0].FullName 'uploads') -PathType Container)) { return $wrapper[0].FullName }
+    return $extractPath
 }
 
-if (-not $hostDirs) {
-    Write-Host "No host collections found under $CaseRoot - expected one subfolder per host, each containing its own uploads\ folder." -ForegroundColor Red
+$hostZips = @(Get-ChildItem -LiteralPath $CaseRoot -File -Filter '*.zip' | ForEach-Object {
+    [pscustomobject]@{ Name = [IO.Path]::GetFileNameWithoutExtension($_.Name); SourcePath = $_.FullName }
+})
+$zipBaseNames = @($hostZips | ForEach-Object { $_.Name })
+
+# A folder whose name exactly matches a zip's own name (minus .zip) is that zip's
+# default extraction destination (Run-IRParse.ps1's -ExtractPath default), not an
+# independently-provided host - excluded here so re-running against the same case
+# folder after a zip has already been extracted once doesn't double-count that host.
+$hostDirs = @(Get-ChildItem -LiteralPath $CaseRoot -Directory | Where-Object {
+    (Test-Path -LiteralPath (Join-Path $_.FullName 'uploads') -PathType Container) -and
+    ($_.Name -notin $zipBaseNames)
+} | ForEach-Object { [pscustomobject]@{ Name = $_.Name; SourcePath = $_.FullName } })
+$hostItems = @($hostDirs) + @($hostZips)
+
+if (-not $hostItems) {
+    Write-Host "No host collections found under $CaseRoot - expected one subfolder per host (each with its own uploads\ folder) or one collection .zip per host." -ForegroundColor Red
     exit 1
 }
 
-Write-Host "Found $($hostDirs.Count) host collection(s) under $CaseRoot`:"
-$hostDirs | ForEach-Object { Write-Host "  $($_.Name)" }
+Write-Host "Found $($hostItems.Count) host collection(s) under $CaseRoot`:"
+$hostItems | ForEach-Object { Write-Host "  $($_.Name)" }
 
 $results = @()
-foreach ($hostDir in $hostDirs) {
+foreach ($item in $hostItems) {
     Write-Host ""
-    Write-Host "=== $($hostDir.Name) ==="
-    $argList = @('-ExecutionPolicy', 'Bypass', '-NonInteractive', '-File', (Join-Path $scriptDir 'Run-IRParse.ps1'), '-CollectionRoot', $hostDir.FullName)
+    Write-Host "=== $($item.Name) ==="
+    $argList = @('-ExecutionPolicy', 'Bypass', '-NonInteractive', '-File', (Join-Path $scriptDir 'Run-IRParse.ps1'), '-CollectionRoot', $item.SourcePath)
     if ($KapePath) { $argList += @('-KapePath', $KapePath) }
     if ($SkipTriagePostProcessing) { $argList += '-SkipTriagePostProcessing' }
 
     # Spawned as a separate process per host, same reasoning as elsewhere in this
-    # project - Run-IRParse.ps1's own `exit` must not terminate this wrapper.
+    # project - Run-IRParse.ps1's own `exit` must not terminate this wrapper. Also
+    # where a .zip host gets extracted, via Run-IRParse.ps1's own -CollectionRoot
+    # handling - nothing extraction-specific needed in this wrapper.
     & powershell.exe @argList
     $exitCode = $LASTEXITCODE
     $results += [pscustomobject]@{
-        Host   = $hostDir.Name
-        Status = if ($exitCode -eq 0) { 'OK' } else { 'FAILED' }
-        Exit   = $exitCode
+        Host         = $item.Name
+        Status       = if ($exitCode -eq 0) { 'OK' } else { 'FAILED' }
+        Exit         = $exitCode
+        ResolvedRoot = Resolve-HostCollectionRoot -Path $item.SourcePath
     }
 }
 
@@ -100,16 +132,16 @@ if (-not $SkipTriagePostProcessing) {
     )
 
     foreach ($spec in $rollupSpecs) {
-        $combined = foreach ($hostDir in $hostDirs) {
-            $csvPath = Join-Path $hostDir.FullName $spec.RelPath
+        $combined = foreach ($r in $results) {
+            $csvPath = Join-Path $r.ResolvedRoot $spec.RelPath
             if (Test-Path -LiteralPath $csvPath) {
-                Import-Csv -LiteralPath $csvPath | Select-Object @{ Name = 'SourceHost'; Expression = { $hostDir.Name } }, *
+                Import-Csv -LiteralPath $csvPath | Select-Object @{ Name = 'SourceHost'; Expression = { $r.Host } }, *
             }
         }
         if ($combined) {
             $combined = $combined | Sort-Object $spec.SortCol
             $combined | Export-Csv -LiteralPath (Join-Path $rollupDir $spec.Name) -NoTypeInformation
-            Write-Host "Wrote $($combined.Count) row(s) across $($hostDirs.Count) host(s) to $($spec.Name)"
+            Write-Host "Wrote $($combined.Count) row(s) across $($hostItems.Count) host(s) to $($spec.Name)"
         } else {
             Write-Host "No data found for $($spec.Name) - skipping"
         }

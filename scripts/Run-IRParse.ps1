@@ -1,11 +1,19 @@
 [CmdletBinding()]
 param(
+    # Either an already-extracted collection folder (contains uploads\), or a
+    # Velociraptor collection .zip straight off the collector - detected
+    # automatically. A zip is extracted once to -ExtractPath and reused on
+    # later runs against the same zip.
     [Parameter(Mandatory = $true)]
     [string]$CollectionRoot,
 
     [string]$OutputPath,
 
     [string]$KapePath,
+
+    # Where to extract -CollectionRoot when it's a .zip. Defaults to a sibling
+    # folder next to the zip, named after the zip file (minus .zip).
+    [string]$ExtractPath,
 
     # Skip the automatic Get-InterestingFiles.ps1 / Get-EvtxTriage.ps1 post-processing
     # pass - use this if you only want KAPE's raw output, or want to run those scripts
@@ -31,7 +39,68 @@ if (-not $KapePath) {
     }
 }
 
+function Expand-CollectionZip {
+    # Idempotent - a multi-GB collection zip is slow to extract, so a re-run against
+    # the same zip (or the same case, via Start-CaseParse.ps1) shouldn't pay that cost
+    # twice. Uses tar (bundled with Windows), not Expand-Archive: Velociraptor
+    # collections nest deep enough (percent-encoded device-root folders, long AppData
+    # paths) to exceed MAX_PATH with Expand-Archive/Copy-Item -Recurse - tar handles it
+    # natively, the same fix already used for Chainsaw's rule bundle in Manage-Tools.ps1.
+    # Calls the Windows-bundled bsdtar by its full System32 path rather than a bare
+    # `tar` - a machine with Git for Windows installed (this project already requires
+    # git on PATH) commonly has Git\usr\bin ahead of System32, and Git's own tar
+    # treats "C:\..." as remote host:file syntax instead of extracting locally.
+    param([string]$ZipPath, [string]$ExtractPath)
+    $tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
+
+    if (Test-Path -LiteralPath (Join-Path $ExtractPath 'uploads') -PathType Container) {
+        Write-Host "Already extracted at $ExtractPath - skipping (delete it to force a re-extract)."
+        return $ExtractPath
+    }
+    if (Test-Path -LiteralPath $ExtractPath) {
+        # Some collection zips wrap everything in one top-level folder instead of
+        # putting uploads\ at the zip root - check for that before assuming a fresh
+        # extract is needed.
+        $wrapper = Get-ChildItem -LiteralPath $ExtractPath -Directory -ErrorAction SilentlyContinue
+        if ($wrapper.Count -eq 1 -and (Test-Path -LiteralPath (Join-Path $wrapper[0].FullName 'uploads') -PathType Container)) {
+            Write-Host "Already extracted at $($wrapper[0].FullName) - skipping (delete $ExtractPath to force a re-extract)."
+            return $wrapper[0].FullName
+        }
+    }
+
+    Write-Host ""
+    Write-Host "Extracting collection zip (this can take a while for a large collection) ..."
+    Write-Host "  $ZipPath"
+    Write-Host "  -> $ExtractPath"
+    New-Item -ItemType Directory -Path $ExtractPath -Force | Out-Null
+    & $tarExe -xf $ZipPath -C $ExtractPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "tar extraction of $ZipPath failed (exit $LASTEXITCODE)" -ForegroundColor Red
+        exit 1
+    }
+
+    if (Test-Path -LiteralPath (Join-Path $ExtractPath 'uploads') -PathType Container) {
+        return $ExtractPath
+    }
+    $topItems = Get-ChildItem -LiteralPath $ExtractPath -Directory
+    if ($topItems.Count -eq 1 -and (Test-Path -LiteralPath (Join-Path $topItems[0].FullName 'uploads') -PathType Container)) {
+        return $topItems[0].FullName
+    }
+    return $ExtractPath  # let the caller's own uploads\ check below report the real error
+}
+
 $CollectionRoot = (Resolve-Path -LiteralPath $CollectionRoot).Path
+if (-not (Get-Item -LiteralPath $CollectionRoot).PSIsContainer) {
+    if ($CollectionRoot -notmatch '\.zip$') {
+        Write-Host "CollectionRoot '$CollectionRoot' is a file but not a .zip - pass either an extracted collection folder or a Velociraptor collection .zip." -ForegroundColor Red
+        exit 1
+    }
+    if (-not $ExtractPath) {
+        $ExtractPath = Join-Path (Split-Path -Parent $CollectionRoot) ([IO.Path]::GetFileNameWithoutExtension($CollectionRoot))
+    }
+    $CollectionRoot = Expand-CollectionZip -ZipPath $CollectionRoot -ExtractPath $ExtractPath
+}
+
 $uploadsPath = Join-Path $CollectionRoot 'uploads'
 
 if (-not (Test-Path -LiteralPath $uploadsPath -PathType Container)) {

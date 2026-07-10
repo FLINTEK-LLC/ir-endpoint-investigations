@@ -21,6 +21,12 @@ if (-not $KapePath) {
 
 $BinPath = Join-Path $KapePath 'Modules\bin'
 $Headers = @{ 'User-Agent' = 'Manage-Tools.ps1' }
+# Explicit path, not a bare `tar` call - a machine with Git for Windows installed
+# (this project already requires git on PATH) commonly has Git\usr\bin ahead of
+# System32 in PATH, and Git's own tar treats "C:\..." as remote host:file syntax
+# ("Cannot connect to C: resolve failed") instead of extracting locally. The
+# Windows-bundled bsdtar at this fixed path doesn't have that problem.
+$TarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
 
 # Ground-truth layout: paths as actually installed under Modules\bin, not the
 # aspirational "EZTools\" subfolder some designs assume. EZ Tools and Hayabusa
@@ -170,7 +176,7 @@ function Install-Chainsaw {
     # (bsdtar, bundled with Windows) handles it fine.
     $tmp = Join-Path $env:TEMP ("chainsaw_" + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-    tar -xf $zipFile -C $tmp
+    & $TarExe -xf $zipFile -C $tmp
     if ($LASTEXITCODE -ne 0) { throw "tar extraction of chainsaw bundle failed (exit $LASTEXITCODE)" }
     if (Test-Path $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
     # A plain folder rename (not Copy-Item -Recurse) - Copy-Item would walk and touch

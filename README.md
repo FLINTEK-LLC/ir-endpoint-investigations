@@ -59,7 +59,15 @@ output - where to start, how to pivot from a detection into a full timeline
   (or anywhere - just point `-KapePath` at it).
 - **git**, on your `PATH`. Used by the setup script to fetch a couple of
   rule sets whose GitHub release packaging doesn't include everything needed
-  (see `scripts/Manage-Tools.ps1` comments if you're curious why).
+  (see `scripts/Manage-Tools.ps1` comments if you're curious why). If you
+  have Git for Windows installed, its own `tar` can end up ahead of Windows'
+  built-in one on `PATH` - not a problem here, every `tar` call in this
+  project uses the Windows-bundled one by its full path specifically to
+  avoid that conflict.
+- **`tar.exe`** (bundled with Windows 10 1803+ / Server 2019+ - already
+  present on any current install). Used to extract collection `.zip`s and a
+  couple of tool bundles; Velociraptor collections nest deep enough to
+  exceed `MAX_PATH` with `Expand-Archive`, which `tar` handles natively.
 - A collection to parse - see "Collection format" below for what this
   currently expects.
 
@@ -92,12 +100,14 @@ those manually.
 **2. Parse a collection:**
 
 ```powershell
-.\scripts\Run-IRParse.ps1 -CollectionRoot "D:\Cases\HOST01\collection"
+.\scripts\Run-IRParse.ps1 -CollectionRoot "D:\Cases\HOST01.zip"
 ```
 
-That's it. Output lands in `<CollectionRoot>\results\`. See "Using it" below
-for what the collection needs to look like, what happens under the hood, and
-how to drive it from the KAPE GUI instead.
+Pass either a collection `.zip` straight off the collector (extracted
+automatically) or an already-extracted folder - same flag either way. Output
+lands next to it in `results\`. See "Using it" below for what the collection
+needs to look like, what happens under the hood, and how to drive it from
+the KAPE GUI instead.
 
 **3. Keep it current:**
 
@@ -125,8 +135,11 @@ This module is built for a specific, common collection layout: a
 collector using Velociraptor's `Windows.KapeFiles.Targets` artifact) produces
 a container with an `uploads\` folder holding two accessor trees -
 `uploads\ntfs\...` (raw NTFS artifacts like `$MFT`) and `uploads\auto\...`
-(everything else - registry, event logs, prefetch, user profiles). Extract
-that container to a folder and that folder is your `-CollectionRoot`.
+(everything else - registry, event logs, prefetch, user profiles). Point
+`-CollectionRoot` at either that container's `.zip` (as downloaded from the
+collector) or an already-extracted folder - `Run-IRParse.ps1` extracts a zip
+automatically the first time, to a sibling folder next to it, and reuses that
+extraction on later runs against the same zip.
 
 If your collector produces a different layout, the module itself doesn't
 care - see "How it works" below for why - but `Run-IRParse.ps1`'s validation
@@ -139,13 +152,18 @@ differs.
 **Script:**
 
 ```powershell
-.\scripts\Run-IRParse.ps1 -CollectionRoot <path> [-OutputPath <path>] [-KapePath <path>]
+.\scripts\Run-IRParse.ps1 -CollectionRoot <path> [-OutputPath <path>] [-KapePath <path>] [-ExtractPath <path>]
 ```
 
-- `-CollectionRoot` (required) - the extracted collection folder.
-- `-OutputPath` (optional) - defaults to `<CollectionRoot>\results`.
+- `-CollectionRoot` (required) - a collection `.zip`, or an already-extracted
+  collection folder.
+- `-OutputPath` (optional) - defaults to `<CollectionRoot>\results` (using
+  the resolved/extracted folder if `-CollectionRoot` was a zip).
 - `-KapePath` (optional) - defaults to auto-detecting from the script's own
   location, falling back to `C:\KAPE`.
+- `-ExtractPath` (optional) - where a `.zip` `-CollectionRoot` gets extracted.
+  Defaults to a sibling folder next to the zip, named after it (minus
+  `.zip`). Ignored if `-CollectionRoot` is already a folder.
 
 It verifies every required tool is present first and aborts cleanly (with a
 PASS/FAIL table) if anything's missing, rather than failing partway through a
@@ -272,16 +290,19 @@ fast-triage output across hosts:
 .\scripts\Start-CaseParse.ps1 -CaseRoot "D:\Cases\2026-07-INC1234"
 ```
 
-Lay out the case folder with one subfolder per host, each an extracted
-collection with its own `uploads\` folder (name each subfolder after the
-actual hostname - that name becomes the label in the rollup):
+Lay out the case folder with one entry per host - either an already-extracted
+collection subfolder (with its own `uploads\`) or a collection `.zip` - drop
+zips in as you receive them, no need to extract each one yourself first:
 
 ```
 D:\Cases\2026-07-INC1234\
   HOST01\uploads\...
-  HOST02\uploads\...
-  HOST03\uploads\...
+  HOST02.zip
+  HOST03.zip
 ```
+
+A subfolder's name, or a zip's filename minus `.zip`, becomes that host's
+label in the rollup and case summary.
 
 After every host finishes, it writes `CaseRollup\All-Hosts-EvtxTriage.csv`
 and `CaseRollup\All-Hosts-InterestingFiles.csv` - each host's fast-triage
