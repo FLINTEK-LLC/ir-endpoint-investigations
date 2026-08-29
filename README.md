@@ -5,6 +5,11 @@ it at a collection, get back a parsed, organized set of timelines, registry
 artifacts, event log detections, and browser history - ready to review in
 standard DFIR tooling.
 
+**Fastest way in:** clone the repo and run `.\scripts\Start-IRConsole.ps1` -
+a numbered menu that covers every action in this README (setup, parsing a
+host or a case, keeping tools updated) with no flags to remember. See Quick
+start below.
+
 It's built as a [KAPE](https://www.kroll.com/kape) Compound Module: one module
 you select in gKAPE (or pass on the command line) that runs KAPE's own
 official parsing modules for every artifact this project's target collection
@@ -73,54 +78,58 @@ just automates fetching and wiring them together.
 
 ## Quick start
 
-**1. Set up your workstation once** (after KAPE is in place per above):
+### The easy way: the console
+
+After KAPE is in place (see Prerequisites above), clone the repo and launch
+the console:
 
 ```powershell
 git clone https://github.com/FLINTEK-LLC/ir-endpoint-investigations.git
 cd ir-endpoint-investigations
-.\scripts\Setup-Workstation.ps1 -ToolsRoot C:\Tools -Mode Setup
+.\scripts\Start-IRConsole.ps1
 ```
 
-This deploys the module onto your KAPE install and fetches the full toolchain
-(EZ Tools, Hayabusa, Chainsaw, Hindsight, RegRipper, NirSoft's browser tools),
-plus a broader analyst kit - the EZ Tools GUI suite (Timeline Explorer,
-Registry Explorer, etc.), Sysinternals Suite, and Autopsy. Two extras -
+Pick **`[1] Full workstation setup`** the first time - it deploys the module
+and fetches the whole toolchain (EZ Tools, Hayabusa, Chainsaw, Hindsight,
+RegRipper, NirSoft's browser tools, plus a broader analyst kit: the EZ Tools
+GUI suite, Sysinternals Suite, and Autopsy). Two extras -
 [Arsenal Image Mounter](https://arsenalrecon.com/downloads) and KAPE itself -
 have no scriptable public download and will print a link if missing; grab
-those manually. **A single tool failing to fetch here (a flaky download, a
-site being temporarily unreachable) won't block you** - EZ Tools is the only
-one this step genuinely can't proceed without; everything else is fetched on
-a best-effort basis and reported at the end, and you can re-run this step
-any time to pick up whatever didn't land the first time.
+those manually. **A single tool failing to fetch here won't block you** - EZ
+Tools is the only one Setup genuinely can't proceed without; everything else
+is best-effort and reported at the end, and re-running Setup picks up
+whatever didn't land the first time.
 
-**2. Parse a collection:**
+Then pick **`[6] Parse a single host collection`** (or `[7]` for a case with
+several hosts) whenever you have a collection to run, and **`[3]`**/**`[4]`**
+periodically to keep detection rules and the broader toolset current. The
+menu prompts for whatever each action needs - a collection path, whether to
+open the review workbook when done, and so on - so there's nothing to
+memorize. It's a thin front end: every option just calls the same script
+you'd otherwise run directly, so nothing here is different logic from the
+command-line path below.
+
+### Or drive it directly with flags (scripting/automation)
+
+Every console action is also a standalone script. The same three steps as
+above, as commands:
 
 ```powershell
+# 1. Set up your workstation once
+.\scripts\Setup-Workstation.ps1 -ToolsRoot C:\Tools -Mode Setup
+
+# 2. Parse a collection - a .zip straight off the collector, or an
+#    already-extracted folder, either way
 .\scripts\Run-IRParse.ps1 -CollectionRoot "D:\Cases\HOST01.zip"
-```
 
-Pass either a collection `.zip` straight off the collector (extracted
-automatically) or an already-extracted folder - same flag either way. Output
-lands next to it in `results\`. See "Using it" below for what the collection
-needs to look like, what happens under the hood, and how to drive it from
-the KAPE GUI instead.
-
-**3. Keep it current:**
-
-```powershell
+# 3. Keep it current
 .\scripts\Manage-Tools.ps1 -Mode Update      # fast - Hayabusa/Chainsaw rule refresh
 .\scripts\Setup-Workstation.ps1 -Mode Update # slower - refreshes the broader toolset
 ```
 
-Run the first one before any significant investigation - detection rules are
-a living data set and meaningfully improve between cases.
-
-**Prefer a menu to remembering flags?** `.\scripts\Start-IRConsole.ps1` wraps
-every script above (setup, verify, update, deploy, parse one host, parse a
-case, rebuild the review output) in a numbered menu that prompts for
-whatever a given action needs. It's a thin front end, not different logic -
-every script it calls is still fully usable directly with flags for
-automation/scripting, this is just the walk-up-and-use path.
+Output from step 2 lands next to the collection in `results\`. See "Using
+it" below for what the collection needs to look like, what happens under
+the hood, and how to drive it from the KAPE GUI instead.
 
 ## Using it
 
