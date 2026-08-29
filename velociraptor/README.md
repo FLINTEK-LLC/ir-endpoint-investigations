@@ -62,3 +62,32 @@ Parameters (all have defaults, override at collection build time if needed):
 - `AddFileExtension1` / `AddFileExtension2` (default `.vhd` / `.iso`) - two
   extra extensions on top of the built-in list, for anything specific to
   your environment.
+
+## Broader dropper-location file collection
+
+The hashing artifact above only covers `C:\Users`, `C:\ProgramData`, and
+`C:\Windows\Temp`. [`malware-drop-locations.csv`](malware-drop-locations.csv)
+is a glob list for Velociraptor's own built-in **`Generic.Collectors.File`**
+artifact (`collectionSpec` parameter - a CSV with a `Glob` column) that
+actually collects the file content, not just a hash, from a wider set of
+locations threat actors commonly use to stage droppers and payloads -
+compiled from real-world IR engagement experience, not just guesswork:
+
+- User-writable staging spots beyond the obvious: `C:\Intel`, `C:\PerfLogs`,
+  `C:\ProgramData`, `C:\Users\Public`
+- Executables/scripts dropped directly in a user's profile root, or hidden
+  under Pictures/Music/Videos (a real technique - AV/EDR attention skews
+  toward `Downloads`/`Desktop`/`AppData`, less toward media folders)
+- `.ssh` (key/config theft, not just droppers)
+- `AppData\Local`/`AppData\Roaming` (shallow, top level only - most of the
+  deeper coverage there already comes from `Windows.KapeFiles.Targets`
+  itself; this is a supplementary catch-all, not a replacement)
+
+No custom artifact needed - `Generic.Collectors.File` ships with
+Velociraptor. Add it to your collector's artifact list alongside
+`Windows.KapeFiles.Targets`, and set its `collectionSpec` parameter to this
+CSV's content (`Root=C:`, `Accessor=auto` match the artifact's own
+defaults - no reason to need raw NTFS access for these paths, they're
+ordinary unlocked, user-writable files). Files it collects land in the same
+`uploads\` tree as everything else, so `IR_Compound_Full.mkape` picks them
+up automatically - nothing to change on the KAPE side.
