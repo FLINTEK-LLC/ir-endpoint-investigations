@@ -15,7 +15,10 @@ if (-not $KapePath) {
     if (Test-Path (Join-Path $candidate 'kape.exe')) {
         $KapePath = $candidate
     } else {
-        $KapePath = 'C:\KAPE'
+        # Matches the README's documented install location and every other script's
+        # own default - previously fell back to 'C:\KAPE' here, a different,
+        # undocumented path that silently pointed at nothing on a standard install.
+        $KapePath = 'C:\Tools\KAPE'
     }
 }
 
@@ -31,32 +34,44 @@ $TarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
 # Ground-truth layout: paths as actually installed under Modules\bin, not the
 # aspirational "EZTools\" subfolder some designs assume. EZ Tools and Hayabusa
 # already sit at the bin root / bin\hayabusa on this KAPE install.
+#
+# Tier is Core or Auxiliary, not just a Group label. Core = EZ Tools - the baseline
+# KAPE parsers IR_Compound_Full's stock modules directly depend on; without these,
+# most of a parse produces nothing. Auxiliary = the detection/enrichment layer
+# (Hayabusa, Chainsaw, Hindsight, RegRipper, NirSoft) - each adds real value, but
+# IR_Compound_Full still produces a useful parse without any one of them (KAPE just
+# skips that module's processor). Verify/Setup only fail (exit 1, which
+# Run-IRParse.ps1 treats as "abort without running KAPE") on a missing Core tool;
+# a missing Auxiliary tool is reported but doesn't block a run - see Invoke-Verify/
+# Invoke-Setup. This was a real problem before: one flaky Auxiliary fetch (e.g.
+# nirsoft.net being unreachable) used to fail Setup/Verify entirely and block
+# Run-IRParse.ps1 from running KAPE at all, even with every Core tool present.
 $RequiredItems = @(
-    @{ Name = 'MFTECmd';               RelPath = 'MFTECmd.exe';                                   Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'PECmd';                 RelPath = 'PECmd.exe';                                     Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'RECmd';                 RelPath = 'RECmd\RECmd.exe';                               Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'AppCompatCacheParser';  RelPath = 'AppCompatCacheParser.exe';                       Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'AmcacheParser';         RelPath = 'AmcacheParser.exe';                              Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'LECmd';                 RelPath = 'LECmd.exe';                                     Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'JLECmd';                RelPath = 'JLECmd.exe';                                    Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'SrumECmd';              RelPath = 'SrumECmd.exe';                                  Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'SumECmd';               RelPath = 'SumECmd.exe';                                   Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'SBECmd';                RelPath = 'SBECmd.exe';                                    Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'WxTCmd';                RelPath = 'WxTCmd.exe';                                    Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'RBCmd';                 RelPath = 'RBCmd.exe';                                     Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'EvtxECmd';              RelPath = 'EvtxECmd\EvtxECmd.exe';                          Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'RECmd_Batch_MC.reb';    RelPath = 'RECmd\BatchExamples\RECmd_Batch_MC.reb';         Type = 'File'; Group = 'EZTools' }
-    @{ Name = 'Hayabusa';              RelPath = 'hayabusa\hayabusa.exe';                          Type = 'File'; Group = 'Hayabusa' }
-    @{ Name = 'Hayabusa rules';        RelPath = 'hayabusa\rules';                                 Type = 'Dir';  Group = 'Hayabusa' }
-    @{ Name = 'Chainsaw';              RelPath = 'Chainsaw\chainsaw.exe';                          Type = 'File'; Group = 'Chainsaw' }
-    @{ Name = 'Chainsaw rules';        RelPath = 'Chainsaw\rules';                                  Type = 'Dir';  Group = 'Chainsaw' }
-    @{ Name = 'Chainsaw sigma rules';  RelPath = 'Chainsaw\sigma\rules';                            Type = 'Dir';  Group = 'Chainsaw' }
-    @{ Name = 'Chainsaw mapping';      RelPath = 'Chainsaw\mappings\sigma-event-logs-all.yml';      Type = 'File'; Group = 'Chainsaw' }
-    @{ Name = 'Hindsight';             RelPath = 'hindsight.exe';                                  Type = 'File'; Group = 'Hindsight' }
-    @{ Name = 'RegRipper';             RelPath = 'RegRipper\rip.exe';                               Type = 'File'; Group = 'RegRipper' }
-    @{ Name = 'RegRipper plugins';     RelPath = 'RegRipper\plugins';                                Type = 'Dir';  Group = 'RegRipper' }
-    @{ Name = 'BrowsingHistoryView';   RelPath = 'BrowsingHistoryView.exe';                         Type = 'File'; Group = 'NirSoft' }
-    @{ Name = 'BrowserDownloadsView';  RelPath = 'BrowserDownloadsView.exe';                        Type = 'File'; Group = 'NirSoft' }
+    @{ Name = 'MFTECmd';               RelPath = 'MFTECmd.exe';                                   Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'PECmd';                 RelPath = 'PECmd.exe';                                     Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'RECmd';                 RelPath = 'RECmd\RECmd.exe';                               Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'AppCompatCacheParser';  RelPath = 'AppCompatCacheParser.exe';                       Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'AmcacheParser';         RelPath = 'AmcacheParser.exe';                              Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'LECmd';                 RelPath = 'LECmd.exe';                                     Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'JLECmd';                RelPath = 'JLECmd.exe';                                    Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'SrumECmd';              RelPath = 'SrumECmd.exe';                                  Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'SumECmd';               RelPath = 'SumECmd.exe';                                   Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'SBECmd';                RelPath = 'SBECmd.exe';                                    Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'WxTCmd';                RelPath = 'WxTCmd.exe';                                    Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'RBCmd';                 RelPath = 'RBCmd.exe';                                     Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'EvtxECmd';              RelPath = 'EvtxECmd\EvtxECmd.exe';                          Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'RECmd_Batch_MC.reb';    RelPath = 'RECmd\BatchExamples\RECmd_Batch_MC.reb';         Type = 'File'; Group = 'EZTools';   Tier = 'Core' }
+    @{ Name = 'Hayabusa';              RelPath = 'hayabusa\hayabusa.exe';                          Type = 'File'; Group = 'Hayabusa';  Tier = 'Auxiliary' }
+    @{ Name = 'Hayabusa rules';        RelPath = 'hayabusa\rules';                                 Type = 'Dir';  Group = 'Hayabusa';  Tier = 'Auxiliary' }
+    @{ Name = 'Chainsaw';              RelPath = 'Chainsaw\chainsaw.exe';                          Type = 'File'; Group = 'Chainsaw';  Tier = 'Auxiliary' }
+    @{ Name = 'Chainsaw rules';        RelPath = 'Chainsaw\rules';                                  Type = 'Dir';  Group = 'Chainsaw';  Tier = 'Auxiliary' }
+    @{ Name = 'Chainsaw sigma rules';  RelPath = 'Chainsaw\sigma\rules';                            Type = 'Dir';  Group = 'Chainsaw';  Tier = 'Auxiliary' }
+    @{ Name = 'Chainsaw mapping';      RelPath = 'Chainsaw\mappings\sigma-event-logs-all.yml';      Type = 'File'; Group = 'Chainsaw';  Tier = 'Auxiliary' }
+    @{ Name = 'Hindsight';             RelPath = 'hindsight.exe';                                  Type = 'File'; Group = 'Hindsight'; Tier = 'Auxiliary' }
+    @{ Name = 'RegRipper';             RelPath = 'RegRipper\rip.exe';                               Type = 'File'; Group = 'RegRipper'; Tier = 'Auxiliary' }
+    @{ Name = 'RegRipper plugins';     RelPath = 'RegRipper\plugins';                                Type = 'Dir';  Group = 'RegRipper'; Tier = 'Auxiliary' }
+    @{ Name = 'BrowsingHistoryView';   RelPath = 'BrowsingHistoryView.exe';                         Type = 'File'; Group = 'NirSoft';   Tier = 'Auxiliary' }
+    @{ Name = 'BrowserDownloadsView';  RelPath = 'BrowserDownloadsView.exe';                        Type = 'File'; Group = 'NirSoft';   Tier = 'Auxiliary' }
 )
 
 function Test-RequiredItem {
@@ -78,24 +93,34 @@ function Invoke-Verify {
             Name    = $item.Name
             Path    = Join-Path $BinPath $item.RelPath
             Group   = $item.Group
+            Tier    = $item.Tier
             Pass    = $ok
         }
     }
 
     if (-not $Quiet) {
         Write-Host ""
-        Write-Host ("{0,-22} {1,-8} {2}" -f 'TOOL', 'STATUS', 'PATH')
-        Write-Host ("{0,-22} {1,-8} {2}" -f '----', '------', '----')
+        Write-Host ("{0,-22} {1,-10} {2,-8} {3}" -f 'TOOL', 'TIER', 'STATUS', 'PATH')
+        Write-Host ("{0,-22} {1,-10} {2,-8} {3}" -f '----', '----', '------', '----')
         foreach ($r in $results) {
             $status = if ($r.Pass) { 'PASS' } else { 'FAIL' }
-            $color = if ($r.Pass) { 'Green' } else { 'Red' }
+            $color = if ($r.Pass) { 'Green' } elseif ($r.Tier -eq 'Core') { 'Red' } else { 'Yellow' }
             Write-Host ("{0,-22} " -f $r.Name) -NoNewline
+            Write-Host ("{0,-10} " -f $r.Tier) -NoNewline
             Write-Host ("{0,-8} " -f $status) -NoNewline -ForegroundColor $color
             Write-Host $r.Path
         }
         $passCount = ($results | Where-Object Pass).Count
+        $missingAux = $results | Where-Object { -not $_.Pass -and $_.Tier -eq 'Auxiliary' }
+        $missingCore = $results | Where-Object { -not $_.Pass -and $_.Tier -eq 'Core' }
         Write-Host ""
         Write-Host "$passCount of $($results.Count) tools verified"
+        if ($missingCore) {
+            Write-Host "Missing Core tool(s) - Run-IRParse.ps1 will refuse to run KAPE until these are present: $(($missingCore.Name) -join ', ')" -ForegroundColor Red
+        }
+        if ($missingAux) {
+            Write-Host "Missing Auxiliary tool(s) - a parse will still run, just without this coverage: $(($missingAux.Name) -join ', ')" -ForegroundColor Yellow
+        }
     }
 
     return $results
@@ -203,6 +228,32 @@ function Install-Chainsaw {
     if (-not (Test-Path (Join-Path $dest 'sigma\rules'))) { throw "sigma\rules folder missing after git checkout" }
 }
 
+function Install-Hayabusa {
+    # The release zip already bundles a populated rules\ folder (unlike Chainsaw's
+    # bundle, where the equivalent folder is just a git submodule stub) - confirmed
+    # by extracting a real release and checking rules\ has actual rule content, not
+    # just a .git pointer - so a plain release-zip fetch is enough, no separate git
+    # checkout needed. win-x64 specifically (not the -live-response or aarch64/x86
+    # variants) to match this project's target platform.
+    $dest = Join-Path $BinPath 'hayabusa'
+    $rel = Get-LatestReleaseAsset -Repo 'Yamato-Security/hayabusa' -Pattern '-win-x64\.zip$'
+    if (-not $rel.Asset) { throw "No win-x64 release asset found for hayabusa ($($rel.Tag))" }
+    $zipFile = Join-Path $env:TEMP $rel.Asset.name
+    Invoke-WebRequest -Uri $rel.Asset.browser_download_url -Headers $Headers -OutFile $zipFile
+    Expand-ZipFlat -ZipPath $zipFile -Dest $dest
+    Remove-Item -LiteralPath $zipFile -Force -ErrorAction SilentlyContinue
+
+    # The release's exe is named hayabusa-<version>-win-x64.exe, not hayabusa.exe -
+    # the stock IR_10_Hayabusa_OfflineEventLogs.mkape module (and Invoke-Update's own
+    # version-banner check) both expect the bare name.
+    $exe = Get-ChildItem -LiteralPath $dest -Filter 'hayabusa*.exe' | Select-Object -First 1
+    if ($exe -and $exe.Name -ne 'hayabusa.exe') {
+        Copy-Item -LiteralPath $exe.FullName -Destination (Join-Path $dest 'hayabusa.exe') -Force
+    }
+    if (-not (Test-Path (Join-Path $dest 'hayabusa.exe'))) { throw "hayabusa.exe missing after extraction ($($rel.Tag))" }
+    if (-not (Test-Path (Join-Path $dest 'rules'))) { throw "rules folder missing after extraction ($($rel.Tag))" }
+}
+
 function Install-Hindsight {
     # Flat at Modules\bin\hindsight.exe, not a subfolder - the stock
     # Apps\GitHub\ObsidianForensics_Hindsight.mkape module references a bare
@@ -276,23 +327,31 @@ function Install-EZTools {
 function Invoke-Setup {
     $before = Invoke-Verify -Quiet
     $missingGroups = ($before | Where-Object { -not $_.Pass }).Group | Sort-Object -Unique
+    # Group -> Tier lookup, so a failed install can be reported (and gate the exit
+    # code) by tier rather than by group name.
+    $tierByGroup = @{}
+    foreach ($item in $RequiredItems) { $tierByGroup[$item.Group] = $item.Tier }
 
     $installed = @()
     $failed = @()
     $alreadyPresent = ($before | Where-Object Pass).Name
 
+    # Each group's installer is independent and wrapped in its own try/catch - one
+    # group failing (e.g. nirsoft.net unreachable) never stops the rest from being
+    # attempted. Combined with Invoke-Verify's Core/Auxiliary split below, an
+    # Auxiliary-only failure here no longer blocks Run-IRParse.ps1 from running KAPE.
     foreach ($group in $missingGroups) {
         try {
             switch ($group) {
                 'EZTools'   { Install-EZTools;   $installed += 'EZTools' }
-                'Hayabusa'  { throw "Hayabusa rules/binary missing and no dedicated installer wired for partial state - re-run Setup after checking network access" }
+                'Hayabusa'  { Install-Hayabusa;  $installed += 'Hayabusa' }
                 'Chainsaw'  { Install-Chainsaw;  $installed += 'Chainsaw' }
                 'Hindsight' { Install-Hindsight; $installed += 'Hindsight' }
                 'RegRipper' { Install-RegRipper; $installed += 'RegRipper' }
                 'NirSoft'   { Install-NirSoftBrowserTools; $installed += 'NirSoft' }
             }
         } catch {
-            $failed += [pscustomobject]@{ Group = $group; Reason = $_.Exception.Message }
+            $failed += [pscustomobject]@{ Group = $group; Tier = $tierByGroup[$group]; Reason = $_.Exception.Message }
         }
     }
 
@@ -301,8 +360,11 @@ function Invoke-Setup {
     Write-Host "Already present: $($alreadyPresent -join ', ')"
     Write-Host "Installed:       $(if ($installed) { $installed -join ', ' } else { '(none)' })"
     if ($failed) {
-        Write-Host "Failed:" -ForegroundColor Red
-        foreach ($f in $failed) { Write-Host "  - $($f.Group): $($f.Reason)" -ForegroundColor Red }
+        Write-Host "Failed:"
+        foreach ($f in $failed) {
+            $color = if ($f.Tier -eq 'Core') { 'Red' } else { 'Yellow' }
+            Write-Host "  - [$($f.Tier)] $($f.Group): $($f.Reason)" -ForegroundColor $color
+        }
     } else {
         Write-Host "Failed:          (none)"
     }
@@ -312,27 +374,33 @@ function Invoke-Setup {
 }
 
 function Invoke-Update {
+    # Only Core tools gate this - an Auxiliary tool being absent shouldn't stop
+    # refreshing rules/binaries for whatever Auxiliary tools ARE present.
     $verifyResult = Invoke-Verify -Quiet
-    if ($verifyResult | Where-Object { -not $_.Pass }) {
-        Write-Host "One or more required tools are missing. Run -Mode Setup first." -ForegroundColor Red
+    if ($verifyResult | Where-Object { -not $_.Pass -and $_.Tier -eq 'Core' }) {
+        Write-Host "One or more Core tools are missing. Run -Mode Setup first." -ForegroundColor Red
         Invoke-Verify | Out-Null
         exit 1
     }
 
     $hayabusaExe = Join-Path $BinPath 'hayabusa\hayabusa.exe'
     Write-Host "=== Update ==="
-    try {
-        # hayabusa.exe has no top-level --version/-V flag; every subcommand prints a
-        # "Hayabusa vX.Y.Z" banner to stdout instead, so pull the version from that.
-        $prevEAP = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        $bannerBefore = (& $hayabusaExe update-rules --help 2>$null | Select-String 'Hayabusa v').ToString()
-        $updateOutput = & $hayabusaExe update-rules 2>&1 | Out-String
-        $ErrorActionPreference = $prevEAP
-        Write-Host "Hayabusa rules: updated ($($bannerBefore.Trim()))"
-        Write-Host ($updateOutput.Trim())
-    } catch {
-        Write-Host "Hayabusa rules update failed: $($_.Exception.Message)" -ForegroundColor Red
+    if (Test-Path -LiteralPath $hayabusaExe) {
+        try {
+            # hayabusa.exe has no top-level --version/-V flag; every subcommand prints a
+            # "Hayabusa vX.Y.Z" banner to stdout instead, so pull the version from that.
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $bannerBefore = (& $hayabusaExe update-rules --help 2>$null | Select-String 'Hayabusa v').ToString()
+            $updateOutput = & $hayabusaExe update-rules 2>&1 | Out-String
+            $ErrorActionPreference = $prevEAP
+            Write-Host "Hayabusa rules: updated ($($bannerBefore.Trim()))"
+            Write-Host ($updateOutput.Trim())
+        } catch {
+            Write-Host "Hayabusa rules update failed: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "Hayabusa not installed (Auxiliary) - skipping rule update. Run -Mode Setup to install it." -ForegroundColor Yellow
     }
 
     try {
@@ -355,12 +423,15 @@ function Invoke-Update {
 
 switch ($Mode) {
     'Verify' {
+        # Only a missing Core tool fails the run - a missing Auxiliary tool is
+        # reported (see Invoke-Verify) but doesn't block Run-IRParse.ps1 from
+        # running KAPE. See the Tier comment on $RequiredItems for why.
         $results = Invoke-Verify
-        if ($results | Where-Object { -not $_.Pass }) { exit 1 } else { exit 0 }
+        if ($results | Where-Object { -not $_.Pass -and $_.Tier -eq 'Core' }) { exit 1 } else { exit 0 }
     }
     'Setup' {
         $results = Invoke-Setup
-        if ($results | Where-Object { -not $_.Pass }) { exit 1 } else { exit 0 }
+        if ($results | Where-Object { -not $_.Pass -and $_.Tier -eq 'Core' }) { exit 1 } else { exit 0 }
     }
     'Update' {
         Invoke-Update

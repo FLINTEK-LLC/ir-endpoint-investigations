@@ -1,7 +1,7 @@
 Description: 'IR Compound Full - runs tool verification plus the official/stock KAPE modules that cover every artifact confirmed present in a Windows.KapeFiles.Targets (_KapeTriage/_SANS_Triage) Velociraptor collection, instead of maintaining bespoke duplicates of tools KAPE already ships modules for. Uses FileMask/%sourceFile% and tool-internal recursive -d scanning wherever available, so it does not need to know the exact device-root folder name Velociraptor encodes into uploads\ntfs\<device> / uploads\auto\<device> - point msource at <CollectionRoot>\uploads directly (Run-IRParse.ps1 does this for you). Output lands in each referenced module''s own native Category subfolder (FileSystem, Registry, ProgramExecution, EventLogs, FileFolderAccess, WebBrowsers, FileDeletion, SRUMDatabase, SUMDatabase), not a custom numbered scheme.'
 Category: IR
 Author: ir-endpoint-investigations
-Version: 2.0
+Version: 2.1
 Id: 6f1a2b3c-4d5e-4f60-8a1b-2c3d4e5f6a7b
 BinaryUrl: https://github.com/EricZimmerman/KAPE
 ExportFormat: csv
@@ -75,7 +75,7 @@ Processors:
         CommandLine: ""
         ExportFormat: ""
     -
-        Executable: hayabusa_OfflineEventLogs.mkape
+        Executable: IR_10_Hayabusa_OfflineEventLogs.mkape
         CommandLine: ""
         ExportFormat: ""
 
@@ -86,6 +86,11 @@ Processors:
 # See Modules\CompoundModuleGuide.guide in the KAPE install for the mechanism itself.
 #
 # Deliberately NOT using:
+# - Apps\GitHub\Hayabusa\hayabusa_OfflineEventLogs.mkape (the stock module): stale
+#   against Hayabusa 4.0.0+, which merged csv-timeline/json-timeline into a single
+#   dfir-timeline command - the stock module's CommandLine no longer runs at all.
+#   IR_10_Hayabusa_OfflineEventLogs.mkape (in this same folder) is a corrected
+#   replacement; see its own Documentation comment for the full flag mapping.
 # - PowerShell_SrumECmd_SRUM-RepairAndParse.mkape: would auto-repair a dirty SRUDB.dat,
 #   but its underlying SRUM-Repair.ps1 dismisses an esentutl /p GUI warning dialog via
 #   SendKeys/AppActivate, which can hang indefinitely in an unattended/non-interactive

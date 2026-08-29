@@ -1,0 +1,43 @@
+Id: 32dab9b9-61af-4566-9167-82373edd51ae
+Version: 1.0
+Author: ir-endpoint-investigations
+Description: 'Hayabusa offline event log detection - replaces the stock module, which is stale against Hayabusa 4.0.0 and no longer runs.'
+Category: EventLogs
+BinaryUrl: https://github.com/Yamato-Security/hayabusa/releases
+ExportFormat: csv
+Processors:
+    -
+        Executable: hayabusa\hayabusa.exe
+        CommandLine: dfir-timeline -d %sourceDirectory% --profile standard -w --quiet --utc -t csv -o %destinationDirectory%\hayabusa_events_offline.csv
+        ExportFormat: csv
+
+# Documentation
+# Replaces KAPE's stock Apps\GitHub\Hayabusa\hayabusa_OfflineEventLogs.mkape, which
+# still calls Hayabusa's pre-4.0 "csv-timeline"/"json-timeline" commands. Hayabusa
+# 4.0.0 (2026-07-29, "Black Hat USA Arsenal" release) merged both into a single
+# "dfir-timeline" command and removed csv-timeline/json-timeline entirely, so the
+# stock module's CommandLine errors out on any current Hayabusa install. If a future
+# KAPE sync ships a corrected stock module, switching IR_Compound_Full.mkape back to
+# it is a one-line change - this file exists only because the stock one is currently
+# broken, not because anything here is IR-Endpoint-Investigations-specific.
+#
+# CSV output only, not CSV+JSONL like the stock module attempted: KAPE only ever runs
+# the FIRST processor tied to a given Executable value in a single run (confirmed
+# elsewhere in this project - KAPE's own stock ObsidianForensics_Hindsight.mkape
+# defines xlsx+jsonl processors, both "Executable: hindsight.exe", and only the xlsx
+# one ever actually executes). The stock Hayabusa module's second (json-timeline)
+# processor was silently dead for the same reason before Hayabusa even changed its
+# CLI, so dropping it here doesn't remove anything that was actually working - CSV is
+# also the only format New-ReviewWorkbook.ps1/New-ReviewBundle.ps1 read.
+#
+# Flag-by-flag mapping from the old stock module's csv-timeline invocation:
+#   csv-timeline        -> dfir-timeline ... -t csv   (csv is the new command's
+#                          default even without -t, but it's passed explicitly so a
+#                          future default change upstream can't silently alter this
+#                          module's output format without a visible diff here)
+#   --UTC                -> --utc   (4.0.0 lowercased every long option name)
+#   -d, --profile, -w, --quiet, -o are unchanged.
+#
+# hayabusa.exe must sit at Modules\bin\hayabusa\hayabusa.exe with its rules\ folder
+# alongside it - Manage-Tools.ps1 -Mode Setup (Install-Hayabusa) installs both from
+# the official win-x64 release zip, which already bundles populated rules.

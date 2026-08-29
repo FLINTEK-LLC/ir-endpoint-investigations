@@ -51,36 +51,29 @@ output - where to start, how to pivot from a detection into a full timeline
 
 ## Prerequisites
 
-- **Windows**, with PowerShell 5.1+ and administrator rights (KAPE itself
-  requires elevation, even just to parse).
-- **[KAPE](https://www.kroll.com/kape)**, installed separately. KAPE is free
-  but requires accepting Kroll's terms on their site - it isn't a plain public
-  download, so it can't be fetched by a script. Install it to `C:\Tools\KAPE`
-  (or anywhere - just point `-KapePath` at it).
-- **git**, on your `PATH`. Used by the setup script to fetch a couple of
-  rule sets whose GitHub release packaging doesn't include everything needed
-  (see `scripts/Manage-Tools.ps1` comments if you're curious why). If you
-  have Git for Windows installed, its own `tar` can end up ahead of Windows'
-  built-in one on `PATH` - not a problem here, every `tar` call in this
-  project uses the Windows-bundled one by its full path specifically to
-  avoid that conflict.
-- **`tar.exe`** (bundled with Windows 10 1803+ / Server 2019+ - already
-  present on any current install). Used to extract collection `.zip`s and a
-  couple of tool bundles; Velociraptor collections nest deep enough to
-  exceed `MAX_PATH` with `Expand-Archive`, which `tar` handles natively.
-- A collection to parse - see "Collection format" below for what this
-  currently expects.
+Just two things you need to get yourself, in order:
 
-Everything else (EZ Tools, Hayabusa, Chainsaw, Hindsight, RegRipper, the
-NirSoft browser tools, and optionally a broader analyst toolset) is fetched automatically by the setup
-scripts below, straight from each tool's own official source. This repo does
-not bundle or redistribute any third-party binaries - **review each tool's own
-license before using it**; this project just automates fetching and wiring
-them together.
+1. **Windows**, with PowerShell 5.1+ and administrator rights (KAPE itself
+   requires elevation, even just to parse).
+2. **[KAPE](https://www.kroll.com/kape)**, downloaded separately - free, but
+   gated behind accepting Kroll's terms on their site, so it can't be
+   fetched by a script. Extract it to `C:\Tools\KAPE` (every default in this
+   repo assumes that path; install it anywhere else and just pass
+   `-KapePath` to every script instead).
+
+That's it for manual setup - `git` and `tar.exe` are also used (to fetch a
+couple of rule sets and extract collection zips/tool bundles), but both
+already ship with any current Windows install, nothing to install yourself.
+Everything else - EZ Tools, Hayabusa, Chainsaw, Hindsight, RegRipper, the
+NirSoft browser tools, and optionally a broader analyst toolset - is fetched
+automatically by the setup step below, straight from each tool's own
+official source. This repo does not bundle or redistribute any third-party
+binaries - **review each tool's own license before using it**; this project
+just automates fetching and wiring them together.
 
 ## Quick start
 
-**1. Set up your workstation once:**
+**1. Set up your workstation once** (after KAPE is in place per above):
 
 ```powershell
 git clone https://github.com/FLINTEK-LLC/ir-endpoint-investigations.git
@@ -88,14 +81,17 @@ cd ir-endpoint-investigations
 .\scripts\Setup-Workstation.ps1 -ToolsRoot C:\Tools -Mode Setup
 ```
 
-This deploys the module onto your KAPE install and fetches the full toolchain:
-EZ Tools, Hayabusa, Chainsaw, Hindsight, RegRipper, NirSoft's
-BrowsingHistoryView/BrowserDownloadsView (via `Manage-Tools.ps1`),
+This deploys the module onto your KAPE install and fetches the full toolchain
+(EZ Tools, Hayabusa, Chainsaw, Hindsight, RegRipper, NirSoft's browser tools),
 plus a broader analyst kit - the EZ Tools GUI suite (Timeline Explorer,
 Registry Explorer, etc.), Sysinternals Suite, and Autopsy. Two extras -
 [Arsenal Image Mounter](https://arsenalrecon.com/downloads) and KAPE itself -
 have no scriptable public download and will print a link if missing; grab
-those manually.
+those manually. **A single tool failing to fetch here (a flaky download, a
+site being temporarily unreachable) won't block you** - EZ Tools is the only
+one this step genuinely can't proceed without; everything else is fetched on
+a best-effort basis and reported at the end, and you can re-run this step
+any time to pick up whatever didn't land the first time.
 
 **2. Parse a collection:**
 
@@ -265,11 +261,13 @@ other `.mkape` files as its processors instead of an executable, and KAPE
 resolves and runs each one recursively. `Modules\!IR\IR_Compound_Full.mkape`
 uses this to reference KAPE's own stock modules (`MFTECmd.mkape`,
 `RegRipper.mkape`, `Chainsaw.mkape`, and so on - several of which are
-themselves compounds) plus one small custom module,
+themselves compounds) plus two small custom modules:
 `IR_00_ToolVerify.mkape`, which runs `Manage-Tools.ps1 -Mode Verify` and
-writes the result to `IR\ToolVerify.txt`. This is the entirety of what's
-custom in this repo - everything else is KAPE's own tooling, referenced by
-filename.
+writes the result to `IR\ToolVerify.txt`, and
+`IR_10_Hayabusa_OfflineEventLogs.mkape`, a corrected stand-in for KAPE's own
+stock Hayabusa module (stale against Hayabusa 4.0.0+ - see "Updating and
+maintaining this module" below). This is the entirety of what's custom in
+this repo - everything else is KAPE's own tooling, referenced by filename.
 
 Every referenced module either uses KAPE's built-in `FileMask`/`%sourceFile%`
 mechanism (finds a given filename recursively under the module source,
@@ -319,8 +317,10 @@ enormous across many hosts - so it's still worth reviewing each host's own
 ```
 Modules/!IR/
   IR_00_ToolVerify.mkape     Custom - runs Manage-Tools.ps1 -Mode Verify
+  IR_10_Hayabusa_OfflineEventLogs.mkape  Custom - corrected replacement for KAPE's
+                              stock Hayabusa module, stale against Hayabusa 4.0.0+
   IR_Compound_Full.mkape     The module you actually select in gKAPE - references
-                              stock KAPE modules + IR_00_ToolVerify
+                              stock KAPE modules + the two custom ones above
 scripts/
   Start-IRConsole.ps1        Menu-driven front end for every script below - prompts
                               for whatever an action needs, no flags to remember
@@ -372,8 +372,18 @@ your own Velociraptor collector build is out of scope for this repo.
 ## Updating and maintaining this module
 
 - `Manage-Tools.ps1 -Mode Verify` - fast, no network calls, safe to run
-  anytime. Checks every required tool is present.
+  anytime. Checks every required tool is present, split into two tiers:
+  **Core** (EZ Tools - the baseline parsers `IR_Compound_Full`'s stock
+  modules directly depend on) and **Auxiliary** (Hayabusa, Chainsaw,
+  Hindsight, RegRipper, the NirSoft browser tools - each adds real
+  detection/enrichment value, but a parse still runs without any one of
+  them). Only a missing **Core** tool fails `Verify`/`Setup` and blocks
+  `Run-IRParse.ps1` from running KAPE at all; a missing Auxiliary tool is
+  reported but doesn't block anything.
 - `Manage-Tools.ps1 -Mode Setup` - fetches whatever `Verify` found missing.
+  Each tool's installer is independent, so one flaky fetch (a site being
+  temporarily unreachable) doesn't stop the others from being attempted -
+  re-run `-Mode Setup` to pick up whatever didn't land the first time.
 - `Manage-Tools.ps1 -Mode Update` - refreshes Hayabusa and Chainsaw's rule
   sets, and re-syncs EZ Tools. **Hindsight, RegRipper, and the NirSoft
   browser tools have no automated update mechanism** - re-run `-Mode Setup`
@@ -384,6 +394,18 @@ your own Velociraptor collector build is out of scope for this repo.
   somewhere unexpected afterward.
 - `Setup-Workstation.ps1 -Mode Update` - refreshes the broader toolset
   (EZ Tools GUI suite, Sysinternals, Autopsy).
+
+**A stock KAPE module can go stale when the tool it wraps changes its CLI** -
+this happened for real with Hayabusa 4.0.0, which merged `csv-timeline`/
+`json-timeline` into a single `dfir-timeline` command and broke KAPE's stock
+`hayabusa_OfflineEventLogs.mkape` outright.
+[`IR_10_Hayabusa_OfflineEventLogs.mkape`](Modules/!IR/IR_10_Hayabusa_OfflineEventLogs.mkape)
+is a corrected replacement (see its own Documentation comment for the exact
+flag mapping) - the pattern to follow if this happens again with another
+tool: fork just that one module into `Modules/!IR/` with a fixed
+`CommandLine`, point `IR_Compound_Full.mkape` at it instead of the stock
+one, and leave a comment there explaining why. Switch back to the stock
+module once/if an upstream KAPE sync ships a fix.
 
 ## Extending this
 

@@ -35,7 +35,11 @@ if (-not $KapePath) {
     if (Test-Path (Join-Path $candidate 'kape.exe')) {
         $KapePath = $candidate
     } else {
-        $KapePath = 'C:\KAPE'
+        # Matches the README's documented install location and every other script's
+        # own default (Deploy-Module.ps1, Start-IRConsole.ps1) - previously fell back
+        # to 'C:\KAPE' here, a different, undocumented path that silently pointed at
+        # nothing on a standard install.
+        $KapePath = 'C:\Tools\KAPE'
     }
 }
 

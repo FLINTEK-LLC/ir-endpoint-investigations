@@ -13,9 +13,10 @@ if (-not (Test-Path (Join-Path $KapePath 'kape.exe'))) {
 # Modules go to !Local rather than !IR since that's the folder KAPE's own sync
 # preserves (Manage-Tools.ps1 -Mode Update moves unrecognized custom .mkape files
 # there automatically) - see README.md "How it works" / "Update cadence" for why.
-# Only IR_00_ToolVerify.mkape and IR_Compound_Full.mkape are ours; IR_Compound_Full
-# references KAPE's own stock modules by filename, so there is nothing to patch
-# per-collection.
+# Everything under Modules\!IR\ is ours (IR_Compound_Full plus a small, growing set
+# of custom modules it references - IR_00_ToolVerify, and any stock module this
+# project has had to replace) - IR_Compound_Full references KAPE's own stock modules
+# by filename otherwise, so there is nothing to patch per-collection.
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $binDest = Join-Path $KapePath 'Modules\bin'
 $localDest = Join-Path $KapePath 'Modules\!Local'
@@ -28,7 +29,8 @@ New-Item -ItemType Directory -Path $localDest -Force -ErrorAction SilentlyContin
 $deployedScripts = Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' |
     Where-Object { $_.Name -notin @('Deploy-Module.ps1', 'Setup-Workstation.ps1', 'Start-IRConsole.ps1') }
 $deployedScripts | Copy-Item -Destination $binDest -Force
-Get-ChildItem -LiteralPath (Join-Path $projectRoot 'Modules\!IR') -Filter 'IR_*.mkape' | Copy-Item -Destination $localDest -Force
+$deployedModules = Get-ChildItem -LiteralPath (Join-Path $projectRoot 'Modules\!IR') -Filter 'IR_*.mkape'
+$deployedModules | Copy-Item -Destination $localDest -Force
 
 Write-Host "Deployed $($deployedScripts.Name -join ', ') to $binDest"
-Write-Host "Deployed IR_00_ToolVerify.mkape / IR_Compound_Full.mkape to $localDest"
+Write-Host "Deployed $($deployedModules.Name -join ', ') to $localDest"
