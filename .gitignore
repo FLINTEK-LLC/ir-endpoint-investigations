@@ -3,3 +3,10 @@ results/
 *.log
 Thumbs.db
 desktop.ini
+
+# Compiled collector output - these are built by velociraptor/Build-Collector.ps1
+# (or manually) and are large, environment-specific binaries, never source content.
+# A real one landed in velociraptor/ once during testing - this prevents a repeat.
+*.exe
+NewCollector.zip
+throwaway-server.config.yaml

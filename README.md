@@ -357,11 +357,15 @@ scripts/
 velociraptor/
   README.md                  Recommended live-state Velociraptor artifacts to
                               collect alongside file-collection (netstat/pslist/
-                              autoruns/services/dnscache), and how to use the
-                              custom artifact below
+                              autoruns/services/dnscache), broader dropper-location
+                              file collection, and how to build a custom collector
   Custom.Windows.Hash.RecentExecutables.yaml  Custom Velociraptor artifact -
                               hashes recently-modified executables in writable
                               directories at collection time
+  malware-drop-locations.csv Glob list for Generic.Collectors.File covering
+                              real-world dropper/malware staging locations
+  Build-Collector.ps1        Builds a full offline collector from the CLI
+                              (Server.Utils.CreateCollector) - no GUI/server needed
 ```
 
 ## Live system state at collection time

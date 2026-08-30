@@ -1,11 +1,13 @@
 # Velociraptor collection notes
 
 `IR_Compound_Full.mkape` only parses what a file-based collection captures
-(`Windows.KapeFiles.Targets` or equivalent) - files on disk. It has nothing
-to say about process/network/persistence state at the moment of collection,
-because that state is gone by the time KAPE runs against the extracted
-files. If the collector is still live when you run it, add the artifacts
-below to the same collection to capture that too.
+(`Windows.Triage.Targets`, formerly `Windows.KapeFiles.Targets` - see
+"Building a custom offline collector" below for why the name changed - or
+equivalent) - files on disk. It has nothing to say about process/network/
+persistence state at the moment of collection, because that state is gone
+by the time KAPE runs against the extracted files. If the collector is
+still live when you run it, add the artifacts below to the same collection
+to capture that too.
 
 The Velociraptor collector configuration itself (which artifacts your
 collector binary ships with, how it's built/signed/distributed) is
@@ -80,14 +82,82 @@ compiled from real-world IR engagement experience, not just guesswork:
   toward `Downloads`/`Desktop`/`AppData`, less toward media folders)
 - `.ssh` (key/config theft, not just droppers)
 - `AppData\Local`/`AppData\Roaming` (shallow, top level only - most of the
-  deeper coverage there already comes from `Windows.KapeFiles.Targets`
+  deeper coverage there already comes from `Windows.Triage.Targets`
   itself; this is a supplementary catch-all, not a replacement)
 
 No custom artifact needed - `Generic.Collectors.File` ships with
 Velociraptor. Add it to your collector's artifact list alongside
-`Windows.KapeFiles.Targets`, and set its `collectionSpec` parameter to this
+`Windows.Triage.Targets`, and set its `collectionSpec` parameter to this
 CSV's content (`Root=C:`, `Accessor=auto` match the artifact's own
 defaults - no reason to need raw NTFS access for these paths, they're
 ordinary unlocked, user-writable files). Files it collects land in the same
 `uploads\` tree as everything else, so `IR_Compound_Full.mkape` picks them
 up automatically - nothing to change on the KAPE side.
+
+## Building a custom offline collector (CLI)
+
+[`Build-Collector.ps1`](Build-Collector.ps1) builds a self-contained
+Velociraptor offline collector - the artifacts above (this project's
+recommended set), the custom hashing artifact, and the dropper-location file
+collection - from the command line, no GUI/server required. Run it in an
+**elevated** PowerShell window pointed at a plain Velociraptor binary (not
+an already-repacked collector - every Velociraptor binary, plain or
+repacked, refuses to run at all without elevation, confirmed directly):
+
+```powershell
+.\Build-Collector.ps1 -VeloExe C:\Tools\velociraptor.exe
+```
+
+It uses `Server.Utils.CreateCollector` - the same server artifact the GUI's
+"Offline Collector Builder" calls internally - rather than the simpler
+`config repack` trick, specifically because `config repack` does not
+reliably carry a required artifact's bundled third-party tool (e.g.
+Autoruns' `autorunsc.exe`) into the new binary, which would silently break
+that artifact at collection time.
+
+Getting this working surfaced four real, non-obvious problems, each
+confirmed by directly triggering and diagnosing it rather than guessed -
+worth knowing if you're extending this further:
+
+1. **`Windows.KapeFiles.Targets` is not built into current Velociraptor
+   releases.** Confirmed directly: "Loaded 421 built in artifacts" is
+   identical whether or not the artifact is expected to be present. It was
+   split out of the main binary into a separate "Triage Artifacts" project
+   ([triage.velocidex.com](https://triage.velocidex.com/); see
+   [Velocidex/velociraptor discussion #4481](https://github.com/Velocidex/velociraptor/discussions/4481),
+   *"I miss you, KAPE"*). The current artifact is **`Windows.Triage.Targets`**
+   - the script downloads its YAML definition directly from that project and
+   loads it via `--definitions`. Its actual parameter is `HighLevelTargets`
+   (confirmed from the artifact's own declared schema - `type: multichoice`,
+   `default: "[]"`), a JSON array *encoded as a string*, not a bare
+   `_SANS_Triage: Y` key.
+2. **`Server.Utils.CreateCollector` needs the base client binary registered
+   as a named tool first.** Without it: `Tool VelociraptorWindows not
+   declared in inventory`. Fixed with `inventory_add()`, pointing at the
+   same binary running the script.
+3. **PowerShell does not correctly pass embedded double quotes to a native
+   executable.** Handing a JSON string containing `"` characters to a
+   native exe via PowerShell can silently corrupt it, and *how* depends on
+   the exact backslash count already preceding each quote - confirmed by
+   deliberately triggering the corruption and reading the real rule
+   (Windows' own `CommandLineToArgvW` argv-parsing convention) off the
+   result: a run of *N* backslashes immediately before a literal quote
+   becomes *N/2* literal backslashes if *N* is even (the quote itself is
+   consumed as a delimiter, never appearing in the output), or *(N-1)/2*
+   backslashes plus one literal quote if *N* is odd. `ConvertTo-NativeArg`
+   in the script implements this correctly so nothing needs hand-escaped
+   JSON strings.
+4. **`Get-Content -Raw` doesn't return a plain string.** It returns a string
+   *decorated* with filesystem note properties (`PSPath`, `PSDrive`,
+   `PSProvider`, etc.). `ConvertTo-Json` beyond `-Depth 2` serializes those
+   note properties instead of the plain text - and since `PSDrive`/
+   `PSProvider` nest further, the output size explodes exponentially with
+   `-Depth` (confirmed directly: 815 bytes at `-Depth 2`, 2.2MB at
+   `-Depth 6`, effectively hung well before `-Depth 10` - this is what a
+   "the script just hangs" symptom actually was). A plain `[string]` cast
+   discards the decoration and fixes both the correctness bug and the
+   blowup, at any depth.
+
+The script fetches `Windows.Triage.Targets.yaml` into `-DefinitionsFolder`
+automatically if not already present, so it stays current with whatever
+that project currently ships rather than being committed here stale.
