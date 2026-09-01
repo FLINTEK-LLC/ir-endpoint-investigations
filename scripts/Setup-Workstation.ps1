@@ -141,6 +141,10 @@ function Resolve-ToolDownload {
         'Url' {
             return [pscustomobject]@{ Url = $Tool.Source.Url; Version = 'n/a'; FileName = ([uri]$Tool.Source.Url).Segments[-1] }
         }
+        'PSModule' {
+            # Nothing to download - Install-Module does its own fetching.
+            return [pscustomobject]@{ Url = "psgallery:$($Tool.Source.Module)"; Version = 'latest'; FileName = $null }
+        }
         default { throw "Unknown Source.Type" }
     }
 }
@@ -161,7 +165,7 @@ foreach ($t in $selected) {
 
 if ($plan.Count -gt 0 -and -not $DryRun) {
     Write-Host "Downloading $($plan.Count) tool(s) in parallel..."
-    $jobs = foreach ($item in $plan) {
+    $jobs = foreach ($item in ($plan | Where-Object { $_.Tool.Source.Type -ne 'PSModule' })) {
         Start-Job -ScriptBlock {
             param($Url, $Path)
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -179,7 +183,7 @@ foreach ($item in $plan) {
         continue
     }
     try {
-        if (-not (Test-Path -LiteralPath $item.Path)) { throw "download did not produce $($item.FileName)" }
+        if ($t.Install.Type -ne 'PSModule' -and -not (Test-Path -LiteralPath $item.Path)) { throw "download did not produce $($item.FileName)" }
         switch ($t.Install.Type) {
             'Msi' {
                 $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList "/i `"$($item.Path)`" /quiet /norestart" -Wait -PassThru
@@ -204,6 +208,16 @@ foreach ($item in $plan) {
                 $name = if ($t.Install.FileName) { $t.Install.FileName } else { $item.FileName }
                 Copy-Item -LiteralPath $item.Path -Destination (Join-Path $dest $name) -Force
             }
+            'PSModule' {
+                # AllUsers so the module is available to the SYSTEM-context
+                # scheduled tasks and to any analyst who logs in, not just
+                # whoever happened to run setup.
+                if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
+                    Install-PackageProvider -Name NuGet -Force -Scope AllUsers | Out-Null
+                }
+                Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+                Install-Module -Name $t.Source.Module -Scope AllUsers -Force -AllowClobber -ErrorAction Stop
+            }
             default { throw "Unknown Install.Type" }
         }
         Remove-Item -LiteralPath $item.Path -Force -ErrorAction SilentlyContinue
@@ -215,6 +229,10 @@ foreach ($item in $plan) {
             $verifyPath = Join-Path $ToolsRoot $t.Verify.Path
             $ok = Test-Path -LiteralPath $verifyPath
             $detail = "$($item.Version) -> $verifyPath"
+        } elseif ($t.Verify.Module) {
+            $m = Get-Module -ListAvailable $t.Verify.Module | Sort-Object Version -Descending | Select-Object -First 1
+            $ok = [bool]$m
+            if ($m) { $detail = "v$($m.Version) (PowerShell module)" }
         } elseif ($t.Verify.Registry) {
             $ok = [bool](Get-ItemProperty -Path @(
                     'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',

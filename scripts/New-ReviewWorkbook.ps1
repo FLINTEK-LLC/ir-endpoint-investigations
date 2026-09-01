@@ -35,7 +35,15 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ResultsPath,
 
-    [string]$OutputFile
+    [string]$OutputFile,
+
+    # Which writer to use.
+    #   Excel       - COM automation; needs Microsoft Excel installed.
+    #   ImportExcel - the ImportExcel module (EPPlus). No Excel required,
+    #                 which is the only option on a cloud investigation host.
+    #   Auto        - Excel when registered, otherwise ImportExcel.
+    [ValidateSet('Auto', 'Excel', 'ImportExcel')]
+    [string]$Engine = 'Auto'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,11 +98,36 @@ try {
     $excel = $null
     $workbook = $null
     try {
-        try {
-            $excel = New-Object -ComObject Excel.Application
-        } catch {
-            Write-Host "Microsoft Excel is not installed/registered on this workstation - New-ReviewWorkbook.ps1 requires it. Use New-ReviewBundle.ps1 instead for a portable, Excel-free alternative." -ForegroundColor Red
-            exit 1
+        # Excel COM is preferred when present - it is what this script was
+        # built and proven against. But a cloud investigation host has no
+        # Office install and never will, so the ImportExcel fallback matters:
+        # without it the whole point of the workbook (one file, one sheet per
+        # artifact, no tab-switching between output folders) is lost on
+        # exactly the machine the analyst is sitting on.
+        if ($Engine -in @('Auto', 'Excel')) {
+            try { $excel = New-Object -ComObject Excel.Application } catch { $excel = $null }
+            if (-not $excel -and $Engine -eq 'Excel') {
+                Write-Host 'Excel COM was requested (-Engine Excel) but Excel is not installed or registered here.' -ForegroundColor Red
+                exit 1
+            }
+        }
+
+        if (-not $excel) {
+            if (-not (Get-Module -ListAvailable ImportExcel)) {
+                Write-Host 'Neither Microsoft Excel nor the ImportExcel module is available, so no workbook can be built.' -ForegroundColor Red
+                Write-Host '  Install the module with:  Install-Module ImportExcel -Scope AllUsers -Force' -ForegroundColor Yellow
+                Write-Host '  Or use New-ReviewBundle.ps1 for the Excel-free folder of CSVs.' -ForegroundColor Yellow
+                exit 1
+            }
+            Import-Module ImportExcel -ErrorAction Stop
+            Write-Host 'Excel is not present - building the workbook with the ImportExcel module instead.'
+            foreach ($item in $prepared) {
+                Import-Csv -LiteralPath $item.Path |
+                    Export-Excel -Path $OutputFile -WorksheetName $item.Name -AutoSize -AutoFilter -FreezeTopRow -BoldTopRow -ErrorAction Stop
+                Write-Host "Added sheet $($item.Name)"
+            }
+            Write-Host "Wrote $($prepared.Count) worksheet(s) to $OutputFile"
+            return
         }
         $excel.Visible = $false
         $excel.DisplayAlerts = $false
