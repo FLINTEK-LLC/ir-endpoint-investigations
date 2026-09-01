@@ -77,7 +77,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$VeloExe,
 
-    [string]$DefinitionsFolder = $PSScriptRoot,
+    [string]$DefinitionsFolder = '',
 
     [string[]]$Artifacts = @(
         'Windows.Triage.Targets',
@@ -92,13 +92,23 @@ param(
 
     [string[]]$HighLevelTargets = @('_SANS_Triage'),
 
-    [string]$GlobsCsv = (Join-Path $PSScriptRoot 'malware-drop-locations.csv'),
+    [string]$GlobsCsv = '',
 
     [string]$OutputZip = ".\NewCollector.zip",
     [string]$ServerConfig = ".\throwaway-server.config.yaml"
 )
 
 $ErrorActionPreference = 'Stop'
+
+# $PSScriptRoot is EMPTY inside a param-block default when a script has
+# [CmdletBinding()] and is launched via `powershell -File` - confirmed
+# directly by bisection: it works without CmdletBinding, and works in the
+# script BODY either way, but an advanced script binds its parameters before
+# $PSScriptRoot is populated. The TUI invokes these scripts with -File, so
+# any path default derived from $PSScriptRoot must be resolved here, not in
+# the param block.
+if (-not $DefinitionsFolder) { $DefinitionsFolder = $PSScriptRoot }
+if (-not $GlobsCsv) { $GlobsCsv = Join-Path $DefinitionsFolder 'malware-drop-locations.csv' }
 
 function ConvertTo-NativeArg {
     # See the .DESCRIPTION block above for exactly what rule this implements

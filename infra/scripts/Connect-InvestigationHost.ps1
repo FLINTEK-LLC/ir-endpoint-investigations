@@ -68,7 +68,7 @@ param(
     [ValidateSet('AWS', 'Azure')]
     [string]$CloudProvider,
 
-    [string]$InfraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
+    [string]$InfraRoot = '',
 
     [string]$AwsProfile = 'ir-cloud',
 
@@ -84,6 +84,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# $PSScriptRoot is EMPTY inside a param-block default when a script has
+# [CmdletBinding()] and is launched via `powershell -File` - confirmed
+# directly by bisection: it works without CmdletBinding, and works in the
+# script BODY either way, but an advanced script binds its parameters before
+# $PSScriptRoot is populated. The TUI invokes these scripts with -File, so
+# any path default derived from $PSScriptRoot must be resolved here, not in
+# the param block.
+if (-not $InfraRoot) { $InfraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path }
 
 function Remove-JitRule {
     # Best-effort teardown of the just-in-time RDP rule. Deliberately does not

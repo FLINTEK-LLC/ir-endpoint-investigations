@@ -90,7 +90,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$VeloExe,
 
-    [string]$InfraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
+    [string]$InfraRoot = '',
 
     [int]$DurationSeconds = 3600,
     [int]$SasExpiryHours = 4,
@@ -99,7 +99,7 @@ param(
     # Same defaults as velociraptor/Build-Collector.ps1, pointed at that
     # folder so the already-fetched Windows.Triage.Targets.yaml and the
     # project's malware-drop-locations.csv are reused, not duplicated.
-    [string]$DefinitionsFolder = (Join-Path $InfraRoot '..\velociraptor' | Resolve-Path).Path,
+    [string]$DefinitionsFolder = '',
 
     [string[]]$Artifacts = @(
         'Windows.Triage.Targets',
@@ -114,13 +114,24 @@ param(
 
     [string[]]$HighLevelTargets = @('_SANS_Triage'),
 
-    [string]$GlobsCsv = (Join-Path $DefinitionsFolder 'malware-drop-locations.csv'),
+    [string]$GlobsCsv = '',
 
     [string]$OutputZip,
     [string]$ServerConfig = ".\throwaway-server.config.yaml"
 )
 
 $ErrorActionPreference = 'Stop'
+
+# $PSScriptRoot is EMPTY inside a param-block default when a script has
+# [CmdletBinding()] and is launched via `powershell -File` - confirmed
+# directly by bisection: it works without CmdletBinding, and works in the
+# script BODY either way, but an advanced script binds its parameters before
+# $PSScriptRoot is populated. The TUI invokes these scripts with -File, so
+# any path default derived from $PSScriptRoot must be resolved here, not in
+# the param block.
+if (-not $InfraRoot) { $InfraRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path }
+if (-not $DefinitionsFolder) { $DefinitionsFolder = (Resolve-Path (Join-Path $InfraRoot '..\velociraptor')).Path }
+if (-not $GlobsCsv) { $GlobsCsv = Join-Path $DefinitionsFolder 'malware-drop-locations.csv' }
 
 if (-not $OutputZip) {
     $OutputZip = ".\$CaseId-collector.zip"
