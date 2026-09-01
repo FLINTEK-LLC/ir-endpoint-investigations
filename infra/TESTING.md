@@ -369,11 +369,6 @@ az resource list --output table
 
 ## Testing AWS afterwards
 
-Same lifecycle, same console. The extra work is networking: AWS's default
-VPC gives a no-public-IP instance no internet route, so you need a NAT
-Gateway (~$0.045/hr) before the bootstrap can download anything. Also
-confirm the 2025 AMI parameter exists in your region:
-
-```powershell
-aws ssm get-parameters-by-path --path /aws/service/ami-windows-latest --query "Parameters[].Name" --output text | Select-String 2025-English-Full
-```
+See **[TESTING-AWS.md](TESTING-AWS.md)** - a full from-scratch walkthrough for
+AWS, including the NAT Gateway the investigation host needs and the ordering
+that stops one quietly billing after you finish.

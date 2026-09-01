@@ -123,9 +123,9 @@ network for a subnet that already has egress.
 
 ## Quick start
 
-**Starting from zero cloud accounts?** See [TESTING.md](TESTING.md) for a
-complete, concrete first-test walkthrough (account creation through
-teardown) rather than the abbreviated version below.
+**Starting from zero cloud accounts?** Full from-scratch walkthroughs,
+account creation through teardown: **[TESTING.md](TESTING.md)** for Azure,
+**[TESTING-AWS.md](TESTING-AWS.md)** for AWS.
 
 ### First-time setup (once per machine)
 
@@ -234,8 +234,10 @@ infra/
   SECURITY.md                     Trust boundaries, credential handling, retention/
                                    immutability defaults - the "why" behind every
                                    security decision below
-  TESTING.md                      Concrete first-test walkthrough, starting from
-                                   zero cloud accounts
+  TESTING.md                      Concrete first-test walkthrough (Azure), starting
+                                   from zero cloud accounts
+  TESTING-AWS.md                  The same for AWS - includes the NAT Gateway the
+                                   host needs, and teardown ordering
   Start-CloudConsole.ps1           The TUI - same thin-wrapper pattern as
                                    ..\scripts\Start-IRConsole.ps1
   modules/
