@@ -360,6 +360,7 @@ az resource list --output table
 | `[4]` prints a portal link instead of launching RDP | Case was created with `access_method=bastion` and the Bastion is not Standard/up. |
 | RDP refuses the connection | Your public IP changed. Re-run `[4]` - it updates the rule. |
 | `D:` missing after 15 minutes | Check `C:\ir-bootstrap-fetch.log` on the host. |
+| `D:` shows as a **DVD drive** | Azure attaches a virtual DVD to every Windows image. On a VM size with no local temp disk it claims `D:`. The bootstrap now moves it to `Z:`; on a host built before that fix, run elevated: `Get-CimInstance Win32_Volume -Filter "DriveType=5" \| ForEach-Object { Set-CimInstance -InputObject $_ -Property @{DriveLetter='Z:'} }` then `Start-ScheduledTask -TaskName 'IR-Case-Mount'`. |
 | Collector build fails minting the SAS | Step 3 again - user-delegation SAS needs a Storage Blob Data role. |
 | `terraform destroy` prompts for variables | Pass the same `-var` values as Step 12. |
 | Extension fails: `CustomScript failed to download the blob ... 404` | Step 7b - `infra/` is not pushed to the branch the VM fetches from. |

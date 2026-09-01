@@ -132,21 +132,49 @@ use_msi = true
 Write-Host ""
 Write-Host "=== Mounting case storage ==="
 
-# D: is the documented, expected evidence drive, but it is NOT safe to
-# assume it's free: on Azure, any VM size that HAS a local temporary disk
-# presents it as D: (Microsoft's own "no local temp disk" FAQ says so
-# explicitly - "a small local disk (that is, a D: Drive)"). The default
-# Standard_D4s_v5 / t3.xlarge have no such disk so D: is normally free, but
-# an operator sizing the VM down to something like the original-series
-# Standard_B2s would silently collide. Detect that instead of stomping on
-# it - and note the old success check (Test-Path 'D:\') would have returned
-# TRUE for a pre-existing temp disk, reporting a mount that never happened.
-$driveInUseBefore = Test-Path -LiteralPath "${MountDriveLetter}:\"
-if ($driveInUseBefore) {
-    $fallback = @('E', 'F', 'G', 'H', 'I', 'J', 'K') | Where-Object { -not (Test-Path -LiteralPath "${_}:\") } | Select-Object -First 1
-    if (-not $fallback) { throw "Requested mount letter ${MountDriveLetter}: is already in use and no fallback letter (E-K) is free." }
-    Write-Host "WARNING: ${MountDriveLetter}: is already in use on this VM (most likely a local temp disk for this VM size). Mounting case evidence at ${fallback}: instead." -ForegroundColor Yellow
-    $MountDriveLetter = $fallback
+# D: is the documented evidence drive, but it is NOT safe to assume it is
+# free, and Test-Path is NOT a sufficient check.
+#
+# Two separate things claim D: on an Azure Windows VM:
+#   * a local temporary disk, on VM sizes that have one;
+#   * the virtual DVD/CD-ROM drive Azure attaches to every Windows image,
+#     which takes D: precisely on the no-temp-disk sizes this project
+#     prefers (it lands on E: when a temp disk already holds D:).
+#
+# An optical drive with no media is INVISIBLE to Test-Path (returns False)
+# but is a real, claimed drive letter - confirmed directly. The old check
+# used Test-Path alone, so it saw D: as free, told rclone to mount there,
+# and the mount lost to the DVD drive. Enumerate Win32_LogicalDisk instead,
+# which lists empty optical and removable drives too.
+$claimed = @(Get-CimInstance Win32_LogicalDisk -ErrorAction SilentlyContinue |
+    ForEach-Object { $_.DeviceID.TrimEnd(':').ToUpper() })
+Write-Host "Drive letters already claimed: $($claimed -join ', ')"
+
+if ($claimed -contains $MountDriveLetter.ToUpper()) {
+    # Prefer relocating an optical drive over surrendering D:, so the
+    # documented evidence letter stays what every other doc says it is.
+    $optical = Get-CimInstance Win32_Volume -ErrorAction SilentlyContinue |
+        Where-Object { $_.DriveType -eq 5 -and $_.DriveLetter -eq "${MountDriveLetter}:" }
+    $relocated = $false
+    if ($optical) {
+        $spare = @('Z', 'Y', 'X', 'W') | Where-Object { $claimed -notcontains $_ } | Select-Object -First 1
+        if ($spare) {
+            try {
+                Set-CimInstance -InputObject $optical -Property @{ DriveLetter = "${spare}:" } -ErrorAction Stop
+                Write-Host "Moved the virtual DVD drive off ${MountDriveLetter}: to ${spare}: so evidence can use the documented letter."
+                $relocated = $true
+                $claimed = @($claimed | Where-Object { $_ -ne $MountDriveLetter.ToUpper() }) + $spare
+            } catch {
+                Write-Host "Could not move the DVD drive off ${MountDriveLetter}: ($($_.Exception.Message)) - will pick another letter instead." -ForegroundColor Yellow
+            }
+        }
+    }
+    if (-not $relocated) {
+        $fallback = @('E', 'F', 'G', 'H', 'I', 'J', 'K') | Where-Object { $claimed -notcontains $_ } | Select-Object -First 1
+        if (-not $fallback) { throw "${MountDriveLetter}: is taken and no fallback letter (E-K) is free." }
+        Write-Host "WARNING: ${MountDriveLetter}: is claimed by something this script will not move. Mounting case evidence at ${fallback}: instead." -ForegroundColor Yellow
+        $MountDriveLetter = $fallback
+    }
 }
 
 $mountPoint = "${MountDriveLetter}:"

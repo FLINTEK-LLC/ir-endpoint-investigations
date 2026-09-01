@@ -10,6 +10,11 @@ desktop.ini
 *.exe
 NewCollector.zip
 *-collector.zip
+# Extracted collector output. A real collection is TENS OF GIGABYTES - a
+# 17GB one here stalled `git add` outright - and it is evidence, which has no
+# business in a public repo. The .zip above is covered; this is the folder it
+# unpacks to.
+*-collector/
 throwaway-server.config.yaml
 # Fetched at collector-build time from triage.velocidex.com by
 # Build-Collector.ps1 / New-CaseCollector.ps1 - a downloaded upstream
