@@ -363,6 +363,7 @@ az resource list --output table
 | Collector build fails minting the SAS | Step 3 again - user-delegation SAS needs a Storage Blob Data role. |
 | `terraform destroy` prompts for variables | Pass the same `-var` values as Step 12. |
 | Extension fails: `CustomScript failed to download the blob ... 404` | Step 7b - `infra/` is not pushed to the branch the VM fetches from. |
+| `a resource with the ID ... already exists - to be managed via Terraform this resource needs to be imported` | Orphan from a previous failed apply: Azure created the resource but the errored apply never recorded it in state. Almost always the bootstrap extension. Delete it and re-run `[2]`: `az vm extension delete --resource-group rg-ir-case-<id> --vm-name ir-case-<id> --name bootstrap-investigation-host` |
 | `SkuNotAvailable` / size not valid | The size is not offered to your subscription in that region. `[2]` now lists what you CAN deploy, with vCPU/RAM. Copy a name exactly, including the `Standard_` prefix. |
 
 ## Testing AWS afterwards

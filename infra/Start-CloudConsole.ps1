@@ -704,7 +704,16 @@ function Invoke-CreateCase {
     $varArgs = ConvertTo-TerraformVarArgs -Vars $vars
     $ok = Invoke-CaseTerraform -EnvDir $envDir -CaseId $caseId -TerraformArgs (@('apply', '-auto-approve') + $varArgs)
     if (-not $ok) {
-        Write-Host "terraform apply failed - see output above. No case record was saved; re-run [2] once the underlying issue (credentials, VPC/subnet, quota, etc.) is fixed." -ForegroundColor Red
+        Write-Host "terraform apply failed - see output above. No case record was saved." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "If the error said a resource 'already exists - to be managed via Terraform this" -ForegroundColor Yellow
+        Write-Host "resource needs to be imported into the State', that is an orphan from a PREVIOUS" -ForegroundColor Yellow
+        Write-Host "failed apply: Azure created the resource, but the errored apply never recorded it" -ForegroundColor Yellow
+        Write-Host "in state. The bootstrap extension is the usual one, because it is created first" -ForegroundColor Yellow
+        Write-Host "and then fails while running. Delete it and re-run [2]:" -ForegroundColor Yellow
+        Write-Host "  az vm extension delete --resource-group rg-ir-case-$caseId --vm-name ir-case-$caseId --name bootstrap-investigation-host" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Otherwise fix the underlying issue (credentials, subnet, quota, VM size) and re-run [2]." -ForegroundColor Yellow
         return
     }
 

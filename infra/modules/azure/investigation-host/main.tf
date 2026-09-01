@@ -164,8 +164,15 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
     fileUris = [local.fetch_script_url]
   })
 
+  # Values are wrapped in ESCAPED DOUBLE quotes, not single quotes.
+  # commandToExecute runs through cmd.exe, which does not treat the
+  # apostrophe as a quote character - single-quoted values therefore arrive
+  # at the script with the apostrophes still attached, and the first thing
+  # that actually parses its input blows up. Confirmed directly: passing
+  # -RepoZipUrl with single quotes yielded a URI whose Host was empty, i.e.
+  # Invoke-WebRequest's "Invalid URI: The hostname could not be parsed".
   protected_settings = jsonencode({
-    commandToExecute = "powershell -ExecutionPolicy Bypass -File fetch-and-bootstrap.ps1 -CaseId '${var.case_id}' -CloudProvider Azure -StorageIdentifier '${var.storage_account_name}/${var.container_name}' -Region '${var.location}' -RepoZipUrl '${local.repo_zip_url}' -ToolsStorageIdentifier '${local.tools_identifier}' -ToolsZipUrl '${var.tools_zip_url}'"
+    commandToExecute = "powershell -ExecutionPolicy Bypass -File fetch-and-bootstrap.ps1 -CaseId \"${var.case_id}\" -CloudProvider Azure -StorageIdentifier \"${var.storage_account_name}/${var.container_name}\" -Region \"${var.location}\" -RepoZipUrl \"${local.repo_zip_url}\" -ToolsStorageIdentifier \"${local.tools_identifier}\" -ToolsZipUrl \"${var.tools_zip_url}\""
   })
 
   # Both role assignments must exist before the script runs - it authenticates
