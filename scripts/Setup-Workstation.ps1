@@ -2,7 +2,21 @@
 param(
     [string]$ToolsRoot = 'C:\Tools',
     [ValidateSet('Setup', 'Update')]
-    [string]$Mode = 'Setup'
+    [string]$Mode = 'Setup',
+
+    # Which tiers from workstation-tools.json to install. Optional tools are
+    # opt-in; -Include names one regardless of tier or Enabled flag.
+    [ValidateSet('Standard', 'Optional', 'All')]
+    [string]$Tier = 'Standard',
+
+    # Wildcards match tool Names. -Include overrides tier and Enabled;
+    # -Exclude always wins.
+    [string[]]$Include,
+    [string[]]$Exclude,
+
+    # Resolve every download and report what WOULD be installed, touching
+    # nothing. Cheap way to check a workstation-tools.json edit is valid.
+    [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,6 +27,7 @@ New-Item -ItemType Directory -Path $ToolsRoot -Force -ErrorAction SilentlyContin
 
 $KapePath = Join-Path $ToolsRoot 'kape'
 $results = @()
+$script:installedManifest = @()
 
 function Add-Result {
     param([string]$Component, [string]$Status, [string]$Detail)
@@ -67,78 +82,190 @@ if (-not (Test-Path (Join-Path $KapePath 'kape.exe'))) {
         Add-Result 'KAPE toolchain (EZ Tools/Hayabusa/Chainsaw/Hindsight/RegRipper)' 'FAILED' $_.Exception.Message
     }
 }
-
-# --- EZ Tools GUI suite (Timeline Explorer, Registry Explorer, EZViewer, etc.) ---
-# These are analyst-facing GUI apps, not KAPE processors, so they don't belong in
-# Modules\bin - Get-ZimmermanTools.ps1 fetches the whole EZ Tools catalog (GUI + CLI)
-# and is idempotent (tracks what it already has in a CSV manifest in $Dest).
+# --- Analyst workstation tools (config-driven) ---
+# The list lives in workstation-tools.json, not in this script, so adding or
+# retiering a tool is a data edit rather than a code change. See that file's
+# comment block for the schema.
+#
+# Downloads run in PARALLEL but installs run SERIALLY, and that split is
+# deliberate: fetching is IO-bound and benefits from concurrency, but Windows
+# Installer holds a machine-wide mutex, so two MSIs at once would simply
+# collide. PowerShell 5.1 has no ForEach-Object -Parallel, hence Start-Job.
 Write-Host ""
-Write-Host "=== EZ Tools GUI suite (Timeline Explorer, Registry Explorer, EZViewer, ...) ==="
-try {
-    $guiDest = Join-Path $ToolsRoot 'EZTools-GUI'
-    New-Item -ItemType Directory -Path $guiDest -Force -ErrorAction SilentlyContinue | Out-Null
-    $getZT = Join-Path $guiDest 'Get-ZimmermanTools.ps1'
-    Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/EricZimmerman/Get-ZimmermanTools/master/Get-ZimmermanTools.ps1' -Headers $Headers -OutFile $getZT
-    & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File $getZT -Dest $guiDest -NetVersion 9
-    Add-Result 'EZ Tools GUI suite' 'OK' "Fetched to $guiDest (Timeline Explorer, Registry Explorer, EZViewer, etc.)"
-} catch {
-    Add-Result 'EZ Tools GUI suite' 'FAILED' $_.Exception.Message
-}
+Write-Host "=== Analyst workstation tools ==="
 
-# --- Sysinternals Suite ---
-Write-Host ""
-Write-Host "=== Sysinternals Suite ==="
-try {
-    $sysDest = Join-Path $ToolsRoot 'SysinternalsSuite'
-    $sysZip = Join-Path $env:TEMP 'SysinternalsSuite.zip'
-    Invoke-WebRequest -Uri 'https://download.sysinternals.com/files/SysinternalsSuite.zip' -Headers $Headers -OutFile $sysZip
-    New-Item -ItemType Directory -Path $sysDest -Force -ErrorAction SilentlyContinue | Out-Null
-    Expand-Archive -LiteralPath $sysZip -DestinationPath $sysDest -Force
-    Remove-Item -LiteralPath $sysZip -Force -ErrorAction SilentlyContinue
-    Add-Result 'Sysinternals Suite' 'OK' "Extracted to $sysDest"
-} catch {
-    Add-Result 'Sysinternals Suite' 'FAILED' $_.Exception.Message
-}
-
-# --- Autopsy ---
-Write-Host ""
-Write-Host "=== Autopsy ==="
-try {
-    $rel = Get-LatestReleaseAsset -Repo 'sleuthkit/autopsy' -Pattern '64bit\.msi$'
-    if (-not $rel.Asset) { throw "No 64-bit MSI asset found in latest Autopsy release ($($rel.Tag))" }
-
-    $installedVersion = $null
-    $uninstallKeys = @(
-        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
-        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
-    )
-    $installed = Get-ItemProperty -Path $uninstallKeys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Autopsy*' } | Select-Object -First 1
-    if ($installed) { $installedVersion = $installed.DisplayVersion }
-
-    if ($Mode -eq 'Update' -and $installedVersion -and ($rel.Tag -match [regex]::Escape($installedVersion))) {
-        Add-Result 'Autopsy' 'OK' "Already at latest version ($installedVersion)"
-    } else {
-        $msiPath = Join-Path $env:TEMP $rel.Asset.name
-        Invoke-WebRequest -Uri $rel.Asset.browser_download_url -Headers $Headers -OutFile $msiPath
-        $p = Start-Process -FilePath 'msiexec.exe' -ArgumentList "/i `"$msiPath`" /quiet /norestart" -Wait -PassThru
-        Remove-Item -LiteralPath $msiPath -Force -ErrorAction SilentlyContinue
-        if ($p.ExitCode -eq 0) {
-            Add-Result 'Autopsy' 'OK' "Installed $($rel.Tag) silently (was: $(if ($installedVersion) { $installedVersion } else { 'not installed' }))"
-        } else {
-            Add-Result 'Autopsy' 'FAILED' "msiexec exited $($p.ExitCode)"
-        }
+$toolsConfigPath = Join-Path $PSScriptRoot 'workstation-tools.json'
+$tools = @()
+if (Test-Path -LiteralPath $toolsConfigPath) {
+    try {
+        $tools = @((Get-Content -Raw -LiteralPath $toolsConfigPath | ConvertFrom-Json).tools)
+    } catch {
+        Add-Result 'workstation-tools.json' 'FAILED' "Could not parse: $($_.Exception.Message)"
     }
-} catch {
-    Add-Result 'Autopsy' 'FAILED' $_.Exception.Message
+} else {
+    Add-Result 'workstation-tools.json' 'FAILED' "Not found at $toolsConfigPath"
+}
+
+# -Include wins over everything: ask for a tool by name and you get it, even
+# if it is Optional or Enabled=false.
+$selected = foreach ($t in $tools) {
+    $named = $Include -and ($Include | Where-Object { $t.Name -like $_ })
+    if ($Exclude -and ($Exclude | Where-Object { $t.Name -like $_ })) { continue }
+    if ($named) { $t; continue }
+    if (-not $t.Enabled) { continue }
+    if ($Tier -eq 'All' -or $t.Tier -eq $Tier) { $t }
+}
+$selected = @($selected)
+Write-Host ("Selected {0} of {1} tool(s): {2}" -f $selected.Count, $tools.Count, (($selected | ForEach-Object { $_.Name }) -join ', '))
+
+# Say WHY the rest were left out. Without this, "-Tier All selected 6 of 8"
+# reads like a bug rather than two tools being Enabled=false on purpose.
+$skipped = @($tools | Where-Object { $_.Name -notin @($selected | ForEach-Object { $_.Name }) })
+if ($skipped.Count -gt 0) {
+    foreach ($grp in $skipped | Group-Object { if (-not $_.Enabled) { 'disabled in config' } elseif ($Exclude -and ($Exclude | Where-Object { $_.Name -like $_ })) { 'excluded' } else { "tier '$($_.Tier)'" } }) {
+        Write-Host ("  not selected ({0}): {1}" -f $grp.Name, (($grp.Group | ForEach-Object { $_.Name }) -join ', ')) -ForegroundColor DarkGray
+    }
+    Write-Host "  (enable in workstation-tools.json, or force one with -Include <name>)" -ForegroundColor DarkGray
+}
+
+function Resolve-ToolDownload {
+    # Turn a config entry into a concrete Url / Version / FileName.
+    param($Tool)
+    switch ($Tool.Source.Type) {
+        'GitHubRelease' {
+            $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$($Tool.Source.Repo)/releases/latest" -Headers $Headers
+            $asset = $rel.assets | Where-Object { $_.name -match $Tool.Source.AssetPattern } | Select-Object -First 1
+            if (-not $asset) { throw "No asset in $($rel.tag_name) matched the configured AssetPattern" }
+            return [pscustomobject]@{ Url = $asset.browser_download_url; Version = $rel.tag_name; FileName = $asset.name }
+        }
+        'Url' {
+            return [pscustomobject]@{ Url = $Tool.Source.Url; Version = 'n/a'; FileName = ([uri]$Tool.Source.Url).Segments[-1] }
+        }
+        default { throw "Unknown Source.Type" }
+    }
+}
+
+# Resolve first (serial, cheap), then download (parallel).
+$plan = @()
+foreach ($t in $selected) {
+    try {
+        $d = Resolve-ToolDownload -Tool $t
+        $plan += [pscustomobject]@{
+            Tool = $t; Url = $d.Url; Version = $d.Version
+            FileName = $d.FileName; Path = (Join-Path $env:TEMP $d.FileName)
+        }
+    } catch {
+        Add-Result $t.Name 'FAILED' "Could not resolve download: $($_.Exception.Message)"
+    }
+}
+
+if ($plan.Count -gt 0 -and -not $DryRun) {
+    Write-Host "Downloading $($plan.Count) tool(s) in parallel..."
+    $jobs = foreach ($item in $plan) {
+        Start-Job -ScriptBlock {
+            param($Url, $Path)
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $Url -OutFile $Path -UseBasicParsing
+        } -ArgumentList $item.Url, $item.Path
+    }
+    $null = $jobs | Wait-Job -Timeout 1800
+    $jobs | Remove-Job -Force -ErrorAction SilentlyContinue
+}
+
+foreach ($item in $plan) {
+    $t = $item.Tool
+    if ($DryRun) {
+        Add-Result $t.Name 'WOULD INSTALL' "$($item.Version) from $($item.Url)"
+        continue
+    }
+    try {
+        if (-not (Test-Path -LiteralPath $item.Path)) { throw "download did not produce $($item.FileName)" }
+        switch ($t.Install.Type) {
+            'Msi' {
+                $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList "/i `"$($item.Path)`" /quiet /norestart" -Wait -PassThru
+                if ($proc.ExitCode -notin @(0, 3010, 1638)) { throw "msiexec exited $($proc.ExitCode)" }
+            }
+            'Zip' {
+                $dest = Join-Path $ToolsRoot $t.Install.Dest
+                $staging = Join-Path $env:TEMP ("tool-" + [guid]::NewGuid().ToString('N'))
+                Expand-Archive -LiteralPath $item.Path -DestinationPath $staging -Force
+                $root = $staging
+                if ($t.Install.Flatten) {
+                    $only = @(Get-ChildItem -LiteralPath $staging -Force)
+                    if ($only.Count -eq 1 -and $only[0].PSIsContainer) { $root = $only[0].FullName }
+                }
+                New-Item -ItemType Directory -Path $dest -Force -ErrorAction SilentlyContinue | Out-Null
+                Get-ChildItem -LiteralPath $root -Force | Copy-Item -Destination $dest -Recurse -Force
+                Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            'Exe' {
+                $dest = Join-Path $ToolsRoot $t.Install.Dest
+                New-Item -ItemType Directory -Path $dest -Force -ErrorAction SilentlyContinue | Out-Null
+                $name = if ($t.Install.FileName) { $t.Install.FileName } else { $item.FileName }
+                Copy-Item -LiteralPath $item.Path -Destination (Join-Path $dest $name) -Force
+            }
+            default { throw "Unknown Install.Type" }
+        }
+        Remove-Item -LiteralPath $item.Path -Force -ErrorAction SilentlyContinue
+
+        # Verify rather than trusting an exit code.
+        $ok = $true
+        $detail = "$($item.Version)"
+        if ($t.Verify.Path) {
+            $verifyPath = Join-Path $ToolsRoot $t.Verify.Path
+            $ok = Test-Path -LiteralPath $verifyPath
+            $detail = "$($item.Version) -> $verifyPath"
+        } elseif ($t.Verify.Registry) {
+            $ok = [bool](Get-ItemProperty -Path @(
+                    'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                    'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+                ) -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like $t.Verify.Registry })
+        }
+        if ($ok) {
+            Add-Result $t.Name 'OK' $detail
+            $script:installedManifest += [pscustomobject]@{
+                Name = $t.Name; Version = $item.Version; Source = $item.Url
+                Why = $t.Why; InstalledUtc = (Get-Date).ToUniversalTime().ToString('o')
+            }
+        } else {
+            Add-Result $t.Name 'FAILED' 'installed but verification failed'
+        }
+    } catch {
+        Add-Result $t.Name 'FAILED' $_.Exception.Message
+    }
+}
+
+# --- EZ Tools GUI suite ---
+# Stays bespoke: Get-ZimmermanTools.ps1 is its own updater with its own
+# manifest and idempotency, which a generic fetcher would only wrap badly.
+Write-Host ""
+Write-Host "=== EZ Tools GUI suite (Timeline Explorer, Registry Explorer, ...) ==="
+if ($DryRun) {
+    Add-Result 'EZ Tools GUI suite' 'WOULD INSTALL' 'via Get-ZimmermanTools.ps1'
+} else {
+    try {
+        $guiDest = Join-Path $ToolsRoot 'EZTools-GUI'
+        New-Item -ItemType Directory -Path $guiDest -Force -ErrorAction SilentlyContinue | Out-Null
+        $getZT = Join-Path $guiDest 'Get-ZimmermanTools.ps1'
+        Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/EricZimmerman/Get-ZimmermanTools/master/Get-ZimmermanTools.ps1' -Headers $Headers -OutFile $getZT
+        & powershell.exe -ExecutionPolicy Bypass -NonInteractive -File $getZT -Dest $guiDest -NetVersion 9
+        Add-Result 'EZ Tools GUI suite' 'OK' "Fetched to $guiDest"
+        $script:installedManifest += [pscustomobject]@{
+            Name = 'EZ Tools GUI suite'; Version = 'rolling'
+            Source = 'https://ericzimmerman.github.io'
+            Why = 'Timeline Explorer / Registry Explorer - the primary review GUIs for KAPE output.'
+            InstalledUtc = (Get-Date).ToUniversalTime().ToString('o')
+        }
+    } catch {
+        Add-Result 'EZ Tools GUI suite' 'FAILED' $_.Exception.Message
+    }
 }
 
 # --- Arsenal Image Mounter ---
-# No public GitHub releases - distributed from arsenalrecon.com/downloads via a MEGA
-# link that changes every version, so this cannot be scripted reliably. Manual step,
-# same handling as KAPE itself.
 Write-Host ""
 Write-Host "=== Arsenal Image Mounter ==="
-Add-Result 'Arsenal Image Mounter' 'MANUAL' 'No scriptable public download (distributed via a MEGA link on https://arsenalrecon.com/downloads that changes per release). Download and extract manually, then launch it once interactively to install its mount driver.'
+Add-Result 'Arsenal Image Mounter' 'MANUAL' 'No scriptable public download (a MEGA link on https://arsenalrecon.com/downloads that changes per release). Install manually, then launch it once to register its mount driver.'
+
 
 # --- Summary ---
 Write-Host ""
@@ -146,6 +273,29 @@ Write-Host "=== Setup-Workstation summary ($Mode) ==="
 foreach ($r in $results) {
     $color = switch ($r.Status) { 'OK' { 'Green' }; 'MANUAL' { 'Yellow' }; default { 'Red' } }
     Write-Host ("{0,-55} {1,-7} {2}" -f $r.Component, $r.Status, $r.Detail) -ForegroundColor $color
+}
+
+# --- Tool manifest ---
+# Records what is actually on this host, with resolved versions. Six months
+# into a matter, 'which MFTECmd parsed this evidence?' has an answer that is
+# not someone's memory. Written next to the case breadcrumb the cloud
+# bootstrap already leaves, so one place on C:\ tells the whole story.
+if (-not $DryRun -and $script:installedManifest.Count -gt 0) {
+    $manifestPath = 'C:\ir-toolkit-manifest.json'
+    try {
+        [pscustomobject]@{
+            GeneratedUtc = (Get-Date).ToUniversalTime().ToString('o')
+            Host         = $env:COMPUTERNAME
+            ToolsRoot    = $ToolsRoot
+            Mode         = $Mode
+            Tier         = $Tier
+            Tools        = $script:installedManifest
+        } | ConvertTo-Json -Depth 6 | Out-File -LiteralPath $manifestPath -Encoding utf8
+        Write-Host ""
+        Write-Host "Tool manifest written to $manifestPath ($($script:installedManifest.Count) tools)." -ForegroundColor Green
+    } catch {
+        Write-Host "Could not write the tool manifest: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
 }
 
 if ($results | Where-Object { $_.Status -eq 'FAILED' }) { exit 1 } else { exit 0 }

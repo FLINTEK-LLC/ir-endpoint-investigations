@@ -1,0 +1,110 @@
+{
+  "$comment": [
+    "Declarative tool list for Setup-Workstation.ps1. Edit this file to add,",
+    "remove, retier or disable a tool - no PowerShell changes needed.",
+    "",
+    "This covers the ANALYST WORKSTATION tier. The KAPE parsing toolchain",
+    "(EZ Tools CLI, Hayabusa, Chainsaw, Hindsight, RegRipper, NirSoft) is NOT",
+    "here: those are tightly coupled to KAPE's own module layout and live in",
+    "Manage-Tools.ps1, which knows each one's quirks (Chainsaw's sigma",
+    "submodule, RegRipper's plugin tree, where KAPE expects each binary).",
+    "",
+    "FIELDS",
+    "  Name        Display name; also what -Include/-Exclude match on.",
+    "  Tier        Standard = installed by default.",
+    "              Optional = only with -Tier Optional or -Include <name>.",
+    "  Enabled     false hides it entirely until you flip it.",
+    "  Why         Free text - kept in the manifest so a future reader knows",
+    "              why this tool was on the box.",
+    "  Source.Type GitHubRelease | Url",
+    "  Source.Repo owner/repo, for GitHubRelease.",
+    "  Source.AssetPattern  regex matched against release asset names. Must",
+    "              select exactly one Windows x64 asset.",
+    "  Source.Url  direct download, for Url type. May contain {version}.",
+    "  Install.Type  Zip | Msi | Exe",
+    "  Install.Dest  folder under -ToolsRoot (Zip/Exe) - ignored for Msi,",
+    "              which installs wherever the package decides.",
+    "  Install.Flatten  true unwraps a single top-level folder in the zip.",
+    "  Verify.Path   path under -ToolsRoot proving the install worked; for Msi",
+    "              use Verify.Registry instead (an uninstall DisplayName match).",
+    "",
+    "Adding a tool is usually just: copy the nearest entry, change Repo and",
+    "AssetPattern. Run Setup-Workstation.ps1 -WhatIf to see what would resolve",
+    "without downloading anything."
+  ],
+
+  "tools": [
+    {
+      "Name": "Sysinternals",
+      "Tier": "Standard",
+      "Enabled": true,
+      "Why": "Autoruns, Procmon, Sigcheck, Strings - baseline live-triage and binary inspection.",
+      "Source": { "Type": "Url", "Url": "https://download.sysinternals.com/files/SysinternalsSuite.zip" },
+      "Install": { "Type": "Zip", "Dest": "SysinternalsSuite", "Flatten": false },
+      "Verify": { "Path": "SysinternalsSuite\\autorunsc.exe" }
+    },
+    {
+      "Name": "Autopsy",
+      "Tier": "Standard",
+      "Enabled": true,
+      "Why": "Full GUI forensic suite for deeper work than KAPE triage output supports.",
+      "Source": { "Type": "GitHubRelease", "Repo": "sleuthkit/autopsy", "AssetPattern": "64bit\\.msi$" },
+      "Install": { "Type": "Msi" },
+      "Verify": { "Registry": "Autopsy*" }
+    },
+    {
+      "Name": "ripgrep",
+      "Tier": "Standard",
+      "Enabled": true,
+      "Why": "Fast recursive search across a multi-GB collection and across parsed CSV output. Single binary.",
+      "Source": { "Type": "GitHubRelease", "Repo": "BurntSushi/ripgrep", "AssetPattern": "x86_64-pc-windows-msvc\\.zip$" },
+      "Install": { "Type": "Zip", "Dest": "rg", "Flatten": true },
+      "Verify": { "Path": "rg\\rg.exe" }
+    },
+    {
+      "Name": "jq",
+      "Tier": "Standard",
+      "Enabled": true,
+      "Why": "Velociraptor emits JSON everywhere - client_info.json, uploads.json, artifact results. Single binary.",
+      "Source": { "Type": "GitHubRelease", "Repo": "jqlang/jq", "AssetPattern": "^jq-windows-amd64\\.exe$" },
+      "Install": { "Type": "Exe", "Dest": "jq", "FileName": "jq.exe" },
+      "Verify": { "Path": "jq\\jq.exe" }
+    },
+    {
+      "Name": "CAPA",
+      "Tier": "Standard",
+      "Enabled": true,
+      "Why": "Identifies what a suspicious PE actually does, offline. Pairs with the dropper paths collected by malware-drop-locations.csv.",
+      "Source": { "Type": "GitHubRelease", "Repo": "mandiant/capa", "AssetPattern": "windows\\.zip$" },
+      "Install": { "Type": "Zip", "Dest": "capa", "Flatten": true },
+      "Verify": { "Path": "capa\\capa.exe" }
+    },
+    {
+      "Name": "DB Browser for SQLite",
+      "Tier": "Standard",
+      "Enabled": true,
+      "Why": "SQLite artifacts Hindsight does not parse - Teams, Slack, Signal, arbitrary app caches.",
+      "Source": { "Type": "GitHubRelease", "Repo": "sqlitebrowser/sqlitebrowser", "AssetPattern": "win64\\.msi$" },
+      "Install": { "Type": "Msi" },
+      "Verify": { "Registry": "DB Browser for SQLite*" }
+    },
+    {
+      "Name": "Loki",
+      "Tier": "Optional",
+      "Enabled": false,
+      "Why": "IOC and YARA-based scanner. Disabled by default: overlaps Hayabusa/Chainsaw detection and is heavy. Also the most practical way to get a YARA engine on the box, since VirusTotal ships YARA as source only - it has no official Windows release binary.",
+      "Source": { "Type": "GitHubRelease", "Repo": "Neo23x0/Loki", "AssetPattern": "^loki_.*\\.zip$" },
+      "Install": { "Type": "Zip", "Dest": "loki", "Flatten": true },
+      "Verify": { "Path": "loki\\loki.exe" }
+    },
+    {
+      "Name": "Notepad++",
+      "Tier": "Optional",
+      "Enabled": false,
+      "Why": "Large-log viewing. Disabled by default - taste, not capability.",
+      "Source": { "Type": "GitHubRelease", "Repo": "notepad-plus-plus/notepad-plus-plus", "AssetPattern": "portable\\.x64\\.zip$" },
+      "Install": { "Type": "Zip", "Dest": "notepadpp", "Flatten": false },
+      "Verify": { "Path": "notepadpp\\notepad++.exe" }
+    }
+  ]
+}

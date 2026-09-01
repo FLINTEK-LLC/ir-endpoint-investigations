@@ -331,6 +331,8 @@ Modules/!IR/
   IR_Compound_Full.mkape     The module you actually select in gKAPE - references
                               stock KAPE modules + the two custom ones above
 scripts/
+  workstation-tools.json     Declarative analyst-tool list read by Setup-Workstation.ps1 -
+                              add/remove/retier a tool by editing this, not the script
   Start-IRConsole.ps1        Menu-driven front end for every script below - prompts
                               for whatever an action needs, no flags to remember
   Manage-Tools.ps1           Verify / Setup / Update the KAPE toolchain (EZ Tools,
@@ -428,8 +430,27 @@ security model.
   `Modules\`/`Targets\` on the install - see the comments in
   `Manage-Tools.ps1` if you're extending this and land a custom module
   somewhere unexpected afterward.
-- `Setup-Workstation.ps1 -Mode Update` - refreshes the broader toolset
-  (EZ Tools GUI suite, Sysinternals, Autopsy).
+- `Setup-Workstation.ps1 -Mode Update` - refreshes the broader analyst
+  toolset. **Which tools that is now lives in
+  [`scripts/workstation-tools.json`](scripts/workstation-tools.json)**, not in
+  the script: each entry names a GitHub release (with an asset regex) or a
+  direct URL, how to install it, and how to verify it landed. Adding a tool is
+  usually copying the nearest entry and changing two fields.
+  - `-Tier Standard` (default) / `-Tier Optional` / `-Tier All`
+  - `-Include <name>` forces one in regardless of tier or `Enabled`;
+    `-Exclude <name>` always wins. Both take wildcards.
+  - `-DryRun` resolves every download and reports what *would* install,
+    touching nothing - the cheap way to check a config edit is valid.
+  - Downloads run in parallel, installs run serially (Windows Installer takes
+    a machine-wide mutex, so concurrent MSIs would collide).
+  - Writes `C:\ir-toolkit-manifest.json` recording every tool, its resolved
+    version, where it came from and why it is on the box - so "which parser
+    version touched this evidence?" has an answer months later.
+
+  The KAPE-coupled toolchain (EZ Tools CLI, Hayabusa, Chainsaw, Hindsight,
+  RegRipper, NirSoft) deliberately stays in `Manage-Tools.ps1`: those are tied
+  to KAPE's own module layout and each has real per-tool quirks that a generic
+  fetcher would express badly.
 
 **A stock KAPE module can go stale when the tool it wraps changes its CLI** -
 this happened for real with Hayabusa 4.0.0, which merged `csv-timeline`/
