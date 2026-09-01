@@ -54,7 +54,12 @@ param(
     # Fallback when ToolsStorageIdentifier is empty: any URL reachable
     # without interactive sign-in. May embed its own authorisation, so it is
     # never echoed to the log.
-    [string]$ToolsZipUrl = ''
+    [string]$ToolsZipUrl = '',
+
+    # Windows time zone ID. UTC is deliberate for a forensic host - see the
+    # clock section below. 'Eastern Standard Time', 'GMT Standard Time' etc.
+    # are valid alternatives (tzutil /l lists them all).
+    [string]$TimeZoneId = 'UTC'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,6 +67,44 @@ $ErrorActionPreference = 'Stop'
 $Headers = @{ 'User-Agent' = 'bootstrap-investigation-host.ps1' }
 
 Write-Host "=== bootstrap-investigation-host.ps1: case $CaseId on $CloudProvider ==="
+
+function Install-KapeFromZip {
+    # Flattens a KAPE zip to C:\Tools\kape no matter how deeply it nests.
+    #
+    # The previous version only looked ONE directory down, so a zip laid out
+    # as kape/kape/kape.exe (which is what a real KAPE download produced)
+    # left the tree nested and Setup-Workstation.ps1 never found kape.exe.
+    # Search recursively for the binary and flatten from whatever directory
+    # actually contains it.
+    param([string]$ZipPath, [string]$Destination = 'C:\Tools\kape')
+
+    $staging = Join-Path $env:TEMP ('kape-extract-' + [guid]::NewGuid().ToString('N'))
+    Expand-Archive -LiteralPath $ZipPath -DestinationPath $staging -Force
+    $exe = Get-ChildItem -LiteralPath $staging -Filter 'kape.exe' -Recurse -File -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $exe) {
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    New-Item -ItemType Directory -Path $Destination -Force -ErrorAction SilentlyContinue | Out-Null
+    Get-ChildItem -LiteralPath $exe.DirectoryName -Force | Move-Item -Destination $Destination -Force
+    Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+    return (Test-Path -LiteralPath (Join-Path $Destination 'kape.exe'))
+}
+
+# --- 0. Clock ---
+# Azure Windows VMs boot on UTC. That is the RIGHT default for a forensic
+# host - every timeline, log and report should be in UTC so artifacts from
+# different hosts and timezones line up without mental arithmetic - so it is
+# set explicitly here rather than left to chance. Override per case with
+# -TimeZoneId if you would rather the box match your local wall clock; the
+# tooling still records UTC internally either way.
+try {
+    Set-TimeZone -Id $TimeZoneId -ErrorAction Stop
+    Write-Host "Time zone set to '$TimeZoneId' (now: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'))"
+} catch {
+    Write-Host "Could not set time zone '$TimeZoneId': $($_.Exception.Message)" -ForegroundColor Yellow
+}
 
 # --- 1. WinFsp + rclone - the drive-letter mount mechanism ---
 Write-Host ""
@@ -246,22 +289,10 @@ use_msi = true
         & $rcloneExe copy "tools:$toolsContainer/kape.zip" $kapeStaging --config $rcloneConfigPath
         $kapeZip = Join-Path $kapeStaging 'kape.zip'
         if (Test-Path -LiteralPath $kapeZip) {
-            Expand-Archive -LiteralPath $kapeZip -DestinationPath 'C:\Tools\kape' -Force
-            # GitHub-style zips wrap everything in a single folder; a KAPE zip
-            # may or may not. Flatten if kape.exe ended up one level down.
-            if (-not (Test-Path -LiteralPath 'C:\Tools\kape\kape.exe')) {
-                $inner = Get-ChildItem -LiteralPath 'C:\Tools\kape' -Directory |
-                    Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'kape.exe') } |
-                    Select-Object -First 1
-                if ($inner) {
-                    Get-ChildItem -LiteralPath $inner.FullName -Force | Move-Item -Destination 'C:\Tools\kape' -Force
-                    Remove-Item -LiteralPath $inner.FullName -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            }
-            if (Test-Path -LiteralPath 'C:\Tools\kape\kape.exe') {
+            if (Install-KapeFromZip -ZipPath $kapeZip) {
                 Write-Host "KAPE staged to C:\Tools\kape - the full parsing toolchain will install."
             } else {
-                Write-Host "WARNING: kape.zip downloaded but kape.exe was not found after extraction. Check the zip's layout." -ForegroundColor Yellow
+                Write-Host "WARNING: kape.zip downloaded but no kape.exe was found anywhere inside it. Check the zip's layout." -ForegroundColor Yellow
             }
         } else {
             Write-Host "WARNING: kape.zip not found in $ToolsStorageIdentifier. Upload it there, or install KAPE manually." -ForegroundColor Yellow
@@ -281,20 +312,10 @@ use_msi = true
         New-Item -ItemType Directory -Path $kapeStaging -Force -ErrorAction SilentlyContinue | Out-Null
         $kapeZip = Join-Path $kapeStaging 'kape.zip'
         Invoke-WebRequest -Uri $ToolsZipUrl -Headers $Headers -OutFile $kapeZip
-        Expand-Archive -LiteralPath $kapeZip -DestinationPath 'C:\Tools\kape' -Force
-        if (-not (Test-Path -LiteralPath 'C:\Tools\kape\kape.exe')) {
-            $inner = Get-ChildItem -LiteralPath 'C:\Tools\kape' -Directory |
-                Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'kape.exe') } |
-                Select-Object -First 1
-            if ($inner) {
-                Get-ChildItem -LiteralPath $inner.FullName -Force | Move-Item -Destination 'C:\Tools\kape' -Force
-                Remove-Item -LiteralPath $inner.FullName -Recurse -Force -ErrorAction SilentlyContinue
-            }
-        }
-        if (Test-Path -LiteralPath 'C:\Tools\kape\kape.exe') {
+        if (Install-KapeFromZip -ZipPath $kapeZip) {
             Write-Host "KAPE staged to C:\Tools\kape - the full parsing toolchain will install."
         } else {
-            Write-Host "WARNING: download succeeded but kape.exe was not found after extraction. If this is a OneDrive share link, confirm it returns the FILE and not an HTML preview page (append '&download=1')." -ForegroundColor Yellow
+            Write-Host "WARNING: download succeeded but no kape.exe was found inside it. If this is a OneDrive share link, confirm it returns the FILE and not an HTML preview page (append '&download=1')." -ForegroundColor Yellow
         }
         Remove-Item -LiteralPath $kapeStaging -Recurse -Force -ErrorAction SilentlyContinue
     } catch {

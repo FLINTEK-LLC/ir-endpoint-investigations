@@ -112,6 +112,25 @@ variable "computer_name" {
   }
 }
 
+variable "timezone_id" {
+  description = <<-EOT
+    Windows time zone ID for the investigation host. Defaults to UTC, and that
+    default is deliberate rather than incidental: a forensic host should record
+    everything in UTC so timelines from endpoints in different zones line up
+    without mental arithmetic, and so report timestamps are unambiguous.
+
+    Azure VMs happen to boot on UTC anyway, but this sets it explicitly so the
+    behaviour is a decision rather than a coincidence.
+
+    Set something like "Eastern Standard Time" or "GMT Standard Time" if you
+    would rather the box match your local wall clock - `tzutil /l` on any
+    Windows machine lists the valid IDs. The collected artifacts still carry
+    their own UTC timestamps either way; this only changes the OS clock display.
+  EOT
+  type        = string
+  default     = "UTC"
+}
+
 variable "admin_username" {
   description = "Local administrator username created on the VM. Bastion brokers the network path only - it does NOT authenticate you to Windows - so this account and its generated password are what you actually sign in with. Connect-InvestigationHost.ps1 prints both."
   type        = string

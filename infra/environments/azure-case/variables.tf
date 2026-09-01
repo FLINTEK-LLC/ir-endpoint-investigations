@@ -56,6 +56,12 @@ variable "tools_zip_url" {
   sensitive   = true
 }
 
+variable "timezone_id" {
+  description = "Windows time zone for the investigation host. Defaults to UTC, which is the right default for forensic work - see the module variable for the reasoning. Use e.g. \"Eastern Standard Time\" to match local wall clock instead."
+  type        = string
+  default     = "UTC"
+}
+
 variable "enable_immutability" {
   description = "Enable a time-based immutability policy on this case's blob container. No default - decide deliberately per case."
   type        = bool

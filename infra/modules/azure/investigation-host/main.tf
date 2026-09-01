@@ -172,7 +172,7 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
   # -RepoZipUrl with single quotes yielded a URI whose Host was empty, i.e.
   # Invoke-WebRequest's "Invalid URI: The hostname could not be parsed".
   protected_settings = jsonencode({
-    commandToExecute = "powershell -ExecutionPolicy Bypass -File fetch-and-bootstrap.ps1 -CaseId \"${var.case_id}\" -CloudProvider Azure -StorageIdentifier \"${var.storage_account_name}/${var.container_name}\" -Region \"${var.location}\" -RepoZipUrl \"${local.repo_zip_url}\" -ToolsStorageIdentifier \"${local.tools_identifier}\" -ToolsZipUrl \"${var.tools_zip_url}\""
+    commandToExecute = "powershell -ExecutionPolicy Bypass -File fetch-and-bootstrap.ps1 -CaseId \"${var.case_id}\" -CloudProvider Azure -StorageIdentifier \"${var.storage_account_name}/${var.container_name}\" -Region \"${var.location}\" -RepoZipUrl \"${local.repo_zip_url}\" -ToolsStorageIdentifier \"${local.tools_identifier}\" -ToolsZipUrl \"${var.tools_zip_url}\" -TimeZoneId \"${var.timezone_id}\""
   })
 
   # Both role assignments must exist before the script runs - it authenticates

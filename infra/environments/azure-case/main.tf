@@ -69,6 +69,7 @@ module "investigation_host" {
   admin_password              = random_password.admin.result
   subnet_id                   = var.subnet_id
   access_method               = var.access_method
+  timezone_id                 = var.timezone_id
   tools_storage_account_id    = var.tools_storage_account_id
   tools_container_name        = var.tools_container_name
   tools_zip_url               = var.tools_zip_url
