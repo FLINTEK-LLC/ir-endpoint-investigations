@@ -96,6 +96,75 @@ function Read-YesNo {
     return $val.Trim().ToUpper().StartsWith('Y')
 }
 
+function Read-Choice {
+    # Numbered picker. Every free-text prompt this replaced was a place an
+    # operator could - and did - mistype something the cloud then rejected
+    # minutes later: a VM size without its Standard_ prefix, a region that
+    # does not exist, a case id that does not match a workspace.
+    #
+    # -Items may be plain strings or objects; -DisplayProperty/-ValueProperty
+    # pick what to show and what to return. -AllowCustom adds a final "type
+    # it myself" entry for the cases a list cannot cover.
+    param(
+        [string]$Prompt,
+        [object[]]$Items,
+        [string]$DisplayProperty,
+        [string]$ValueProperty,
+        [string]$Default,
+        [switch]$AllowCustom,
+        [string]$CustomPrompt = 'Enter a value'
+    )
+    if (-not $Items -or $Items.Count -eq 0) {
+        if ($AllowCustom) { return Read-Default -Prompt $CustomPrompt -Default $Default }
+        return $null
+    }
+
+    Write-Host ""
+    Write-Host $Prompt -ForegroundColor Cyan
+    $defaultIndex = $null
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+        $item = $Items[$i]
+        $display = if ($DisplayProperty) { $item.$DisplayProperty } else { [string]$item }
+        $value = if ($ValueProperty) { $item.$ValueProperty } else { [string]$item }
+        if ($Default -and $value -eq $Default) { $defaultIndex = $i + 1 }
+        Write-Host ("  [{0}] {1}" -f ($i + 1), $display)
+    }
+    $customIndex = $null
+    if ($AllowCustom) {
+        $customIndex = $Items.Count + 1
+        Write-Host ("  [{0}] Something else - type it myself" -f $customIndex)
+    }
+
+    while ($true) {
+        $hint = if ($defaultIndex) { " [$defaultIndex]" } else { '' }
+        $raw = (Read-Host "Choose$hint").Trim()
+        if (-not $raw -and $defaultIndex) { $raw = "$defaultIndex" }
+        $n = 0
+        if ([int]::TryParse($raw, [ref]$n)) {
+            if ($customIndex -and $n -eq $customIndex) {
+                return Read-Default -Prompt $CustomPrompt -Default $Default
+            }
+            if ($n -ge 1 -and $n -le $Items.Count) {
+                $chosen = $Items[$n - 1]
+                return $(if ($ValueProperty) { $chosen.$ValueProperty } else { [string]$chosen })
+            }
+        }
+        Write-Host "Enter a number from the list." -ForegroundColor Yellow
+    }
+}
+
+# Regions offered in the picker. Not exhaustive - "Something else" covers the
+# rest - just the ones people actually reach for, so the common path is a
+# keypress rather than a spelling test.
+$script:AzureRegions = @(
+    'eastus', 'eastus2', 'centralus', 'westus2', 'westus3',
+    'northeurope', 'westeurope', 'uksouth', 'canadacentral', 'australiaeast'
+)
+$script:AwsRegions = @(
+    'us-east-1', 'us-east-2', 'us-west-2', 'eu-west-1', 'eu-west-2',
+    'eu-central-1', 'ca-central-1', 'ap-southeast-2'
+)
+
 function Read-CaseId {
     param([string]$Prompt = "Case ID (lowercase letters/numbers/hyphens, 3-42 chars)")
     while ($true) {
@@ -107,12 +176,7 @@ function Read-CaseId {
 }
 
 function Read-CloudChoice {
-    while ($true) {
-        $val = (Read-Host "Cloud provider - AWS or Azure").Trim()
-        if ($val -match '(?i)^aws$') { return 'AWS' }
-        if ($val -match '(?i)^azure$') { return 'Azure' }
-        Write-Host "Enter 'AWS' or 'Azure'." -ForegroundColor Yellow
-    }
+    return Read-Choice -Prompt "Cloud provider:" -Items @('Azure', 'AWS') -Default 'Azure'
 }
 
 function Wait-ForEnter {
@@ -566,13 +630,16 @@ function Invoke-CreateCase {
     if ($enableImmutability) {
         $vars['retention_days'] = [int](Read-Default -Prompt "Retention period (days)" -Default '90')
         Write-Host "GOVERNANCE = recoverable if you lock yourself out. COMPLIANCE = irreversible once the grace period elapses. See infra/SECURITY.md before choosing COMPLIANCE." -ForegroundColor Cyan
-        $vars['retention_mode'] = (Read-Default -Prompt "Retention mode (GOVERNANCE/COMPLIANCE)" -Default 'GOVERNANCE').ToUpper()
+        $vars['retention_mode'] = Read-Choice -Prompt "Retention mode:" -Default 'GOVERNANCE' -Items @(
+            [pscustomobject]@{ Label = 'GOVERNANCE - recoverable; an authorised principal can still lift it'; Value = 'GOVERNANCE' }
+            [pscustomobject]@{ Label = 'COMPLIANCE - IRREVERSIBLE until retention expires; nobody can lift it'; Value = 'COMPLIANCE' }
+        ) -DisplayProperty Label -ValueProperty Value
     }
     $vars['archive_after_days'] = [int](Read-Default -Prompt "Days before automatic transition to cold storage" -Default '30')
 
     if ($cloud -eq 'AWS') {
         $envDir = $script:AwsEnvDir
-        $vars['region'] = Read-Default -Prompt "AWS region" -Default 'us-east-1'
+        $vars['region'] = Read-Choice -Prompt "AWS region:" -Items $script:AwsRegions -Default 'us-east-1' -AllowCustom -CustomPrompt 'AWS region'
         $vars['aws_profile'] = Read-Default -Prompt "AWS CLI profile" -Default 'ir-cloud'
         Write-Host "The subnet below needs its own outbound internet route (a NAT Gateway) - the investigation host has no public IP by design. Most existing/default VPCs already have this; see infra/README.md if you need to add one." -ForegroundColor Cyan
         $vpcId = Read-Required -Prompt "VPC ID"
@@ -584,7 +651,7 @@ function Invoke-CreateCase {
         $vars['instance_type'] = Read-Default -Prompt "Instance type" -Default 't3.xlarge'
     } else {
         $envDir = $script:AzureEnvDir
-        $vars['location'] = Read-Default -Prompt "Azure region" -Default 'eastus'
+        $vars['location'] = Read-Choice -Prompt "Azure region:" -Items $script:AzureRegions -Default 'eastus' -AllowCustom -CustomPrompt 'Azure region'
         Write-Host "The subnet below needs its own outbound internet route - the investigation host has no public IP by design. Most existing VNets already have this." -ForegroundColor Cyan
         Write-Host "Do NOT use the AzureBastionSubnet here - that subnet is reserved for Bastion and cannot hold other resources." -ForegroundColor Cyan
         $subnetId = Read-Required -Prompt "Subnet resource ID for the investigation host"
@@ -592,21 +659,11 @@ function Invoke-CreateCase {
         $vars['subnet_id'] = $subnetId
 
         Write-Host ""
-        Write-Host "How should this case's host be reached?" -ForegroundColor Cyan
-        Write-Host "  rdp  - public IP + deny-by-default NSG, opened just-in-time to your own IP" -ForegroundColor Cyan
-        Write-Host "         when you connect and closed again after. ~`$0.005/hr, and that IP also" -ForegroundColor Cyan
-        Write-Host "         gives the host the outbound internet its bootstrap needs." -ForegroundColor Cyan
-        Write-Host "  bastion - no public IP at all; connect via the shared Standard Bastion ([8])." -ForegroundColor Cyan
-        Write-Host "         Strongest posture, but ~`$0.29/hr and you must supply your own egress" -ForegroundColor Cyan
-        Write-Host "         (NAT Gateway) or the bootstrap cannot download anything." -ForegroundColor Cyan
-        $accessChoice = ''
-        while ($accessChoice -notin @('rdp-allowlist', 'bastion')) {
-            $raw = (Read-Default -Prompt "Access method (rdp/bastion)" -Default 'rdp').Trim().ToLower()
-            if ($raw -in @('rdp', 'rdp-allowlist')) { $accessChoice = 'rdp-allowlist' }
-            elseif ($raw -eq 'bastion') { $accessChoice = 'bastion' }
-            else { Write-Host "Enter 'rdp' or 'bastion'." -ForegroundColor Yellow }
-        }
-        $vars['access_method'] = $accessChoice
+        $vars['access_method'] = Read-Choice -Prompt "How should this case's host be reached?" -Default 'rdp-allowlist' -Items @(
+            [pscustomobject]@{ Label = 'RDP allowlist - public IP behind a deny-all NSG, opened just-in-time to your own IP. ~$0.005/hr, and that IP also gives the host its outbound internet.'; Value = 'rdp-allowlist' }
+            [pscustomobject]@{ Label = 'Bastion - no public IP at all; connect via the shared Standard Bastion ([8]). Strongest posture, ~$0.29/hr, and you must supply your own egress (NAT Gateway).'; Value = 'bastion' }
+        ) -DisplayProperty Label -ValueProperty Value
+        $accessChoice = $vars['access_method']
 
         # Bastion is shared per-VNet, deployed by [8]. Pre-fill from its state
         # when it exists so this is a confirm-and-continue rather than a
@@ -640,7 +697,28 @@ function Invoke-CreateCase {
             $vars['tools_container_name'] = Read-Default -Prompt "Tools container name" -Default 'irtools'
         }
 
-        $vars['vm_size'] = Format-AzureVmSize (Read-Default -Prompt "VM size" -Default 'Standard_B4s_v2')
+        # Offer only sizes this subscription can actually deploy in this region.
+        # Typing a size by hand is how we ended up sending Azure "B4s_v2"
+        # (prefix stripped) and "Standard_D4s_v5" (capacity-restricted); a list
+        # built from live availability removes both failure modes.
+        Write-Host ""
+        Write-Host "Looking up VM sizes available to you in $($vars['location'])..." -ForegroundColor DarkGray
+        $sizeOptions = Get-AvailableVmSizes -Location $vars['location']
+        if ($sizeOptions.Count -gt 0) {
+            $sizeItems = $sizeOptions | ForEach-Object {
+                $note = if ($_.HasTempDisk) { '  - has a local temp disk, may take D:' } else { '' }
+                [pscustomobject]@{
+                    Label = ('{0,-24} {1} vCPU, {2} GiB{3}' -f $_.Name, $_.VCpu, $_.MemoryGb, $note)
+                    Value = $_.Name
+                }
+            }
+            $vars['vm_size'] = Format-AzureVmSize (Read-Choice -Prompt "VM size (available in $($vars['location'])):" `
+                -Items $sizeItems -DisplayProperty Label -ValueProperty Value `
+                -AllowCustom -CustomPrompt 'VM size')
+        } else {
+            Write-Host "Could not list sizes (is 'az login' active?) - falling back to typing one." -ForegroundColor Yellow
+            $vars['vm_size'] = Format-AzureVmSize (Read-Default -Prompt "VM size" -Default 'Standard_B4s_v2')
+        }
     }
 
     if ($cloud -eq 'Azure') {
@@ -746,8 +824,14 @@ function Select-ExistingCase {
         Write-Host "No cases found in infra\.cases\ - create one first (option 2)." -ForegroundColor Yellow
         return $null
     }
-    Write-Host "Known cases: $(($cases | ForEach-Object { "$($_.case_id) ($($_.cloud), $($_.status))" }) -join ', ')"
-    $caseId = Read-Required -Prompt $Prompt
+    $caseItems = $cases | Sort-Object case_id | ForEach-Object {
+        [pscustomobject]@{
+            Label = ('{0,-20} {1,-6} {2}' -f $_.case_id, $_.cloud, $_.status)
+            Value = $_.case_id
+        }
+    }
+    $caseId = Read-Choice -Prompt "$($Prompt):" -Items $caseItems -DisplayProperty Label -ValueProperty Value `
+        -AllowCustom -CustomPrompt 'Case ID (one not listed here)'
     if (-not $caseId) { return $null }
     $record = Get-CaseRecord -CaseId $caseId
     if (-not $record) {
