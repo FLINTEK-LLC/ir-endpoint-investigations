@@ -1,0 +1,21 @@
+<powershell>
+$ErrorActionPreference = 'Stop'
+try {
+    # This host launches with no EC2 key pair (SSM Session Manager is the
+    # sole connection path - see the security group's own comment), so the
+    # local Administrator password is set directly here instead of relying
+    # on EC2's key-pair-encrypted GetPasswordData mechanism. Safe to embed
+    # literally in this double-quoted string - the root module's
+    # random_password.admin restricts the character set specifically to
+    # avoid a literal quote (or other PowerShell-significant character)
+    # breaking this line.
+    net user Administrator /active:yes
+    net user Administrator "${admin_password}"
+
+    Invoke-WebRequest -Uri "${fetch_script_url}" -OutFile 'C:\fetch-and-bootstrap.ps1'
+    & 'C:\fetch-and-bootstrap.ps1' -CaseId "${case_id}" -CloudProvider 'AWS' -StorageIdentifier "${bucket_name}" -Region "${region}" -RepoZipUrl "${repo_zip_url}"
+} catch {
+    $_ | Out-File -FilePath 'C:\ir-bootstrap-fetch.log' -Append
+    throw
+}
+</powershell>

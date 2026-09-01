@@ -9,4 +9,35 @@ desktop.ini
 # A real one landed in velociraptor/ once during testing - this prevents a repeat.
 *.exe
 NewCollector.zip
+*-collector.zip
 throwaway-server.config.yaml
+# Fetched at collector-build time from triage.velocidex.com by
+# Build-Collector.ps1 / New-CaseCollector.ps1 - a downloaded upstream
+# artifact, deliberately not vendored, so it stays current.
+velociraptor/Windows.Triage.Targets.yaml
+
+# Terraform - state files (which contain real resource IDs/values and the
+# generated Windows admin password - see infra/SECURITY.md) and
+# working-directory artifacts never belong in git. This covers per-case
+# workspace state too: terraform.tfstate.d/ matches *.tfstate.* below.
+#
+# Note .terraform.lock.hcl is deliberately NOT ignored - provider lock
+# files are meant to be committed, so a partner org cloning this gets the
+# same provider versions these modules were validated against.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+# Local variable values (e.g. the shared Bastion's VNet ID / subnet CIDR,
+# written by Start-CloudConsole.ps1 option [8]) - environment-specific, not
+# shared config. *.tfvars.example stays tracked if one is ever added.
+*.tfvars
+*.auto.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+
+# Local, non-secret case bookkeeping (case IDs, regions, resource names) -
+# see infra/README.md's "Accounts, tokens, and secrets" section. Never
+# contains credential material, but is still local-only, not shared state.
+infra/.cases/

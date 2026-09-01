@@ -389,12 +389,22 @@ function Invoke-Update {
         try {
             # hayabusa.exe has no top-level --version/-V flag; every subcommand prints a
             # "Hayabusa vX.Y.Z" banner to stdout instead, so pull the version from that.
+            # try/finally, not a plain restore-after: if anything below throws
+            # (most likely .ToString() on a null Select-String match when the
+            # banner format changes), a bare restore line is skipped and
+            # $ErrorActionPreference leaks as 'Continue' for the REST of this
+            # script - silently turning later terminating errors into
+            # non-terminating ones and corrupting the exit code.
             $prevEAP = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            $bannerBefore = (& $hayabusaExe update-rules --help 2>$null | Select-String 'Hayabusa v').ToString()
-            $updateOutput = & $hayabusaExe update-rules 2>&1 | Out-String
-            $ErrorActionPreference = $prevEAP
-            Write-Host "Hayabusa rules: updated ($($bannerBefore.Trim()))"
+            try {
+                $ErrorActionPreference = 'Continue'
+                $bannerMatch = & $hayabusaExe update-rules --help 2>$null | Select-String 'Hayabusa v'
+                $bannerBefore = if ($bannerMatch) { $bannerMatch.ToString().Trim() } else { 'version unknown' }
+                $updateOutput = & $hayabusaExe update-rules 2>&1 | Out-String
+            } finally {
+                $ErrorActionPreference = $prevEAP
+            }
+            Write-Host "Hayabusa rules: updated ($bannerBefore)"
             Write-Host ($updateOutput.Trim())
         } catch {
             Write-Host "Hayabusa rules update failed: $($_.Exception.Message)" -ForegroundColor Red

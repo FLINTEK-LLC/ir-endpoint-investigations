@@ -366,6 +366,10 @@ velociraptor/
                               real-world dropper/malware staging locations
   Build-Collector.ps1        Builds a full offline collector from the CLI
                               (Server.Utils.CreateCollector) - no GUI/server needed
+infra/
+  README.md                  Disposable per-case cloud investigation host + evidence
+                              storage (AWS and Azure) - TUI-driven, see
+                              "Cloud IR infrastructure" below
 ```
 
 ## Live system state at collection time
@@ -380,7 +384,26 @@ Velociraptor artifacts worth adding alongside your file collection
 modified executables in common writable directories - adapted from
 [secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations).
 This is guidance and one adapted artifact, not a drop-in collector config -
-your own Velociraptor collector build is out of scope for this repo.
+a fully general Velociraptor collector build for an arbitrary environment
+is still out of scope for this repo, since it varies too much
+environment to environment. If you're using this project's own cloud IR
+infrastructure (see [`infra/`](infra/) below), though,
+`infra/scripts/New-CaseCollector.ps1` *does* build a working, case-scoped
+collector for you end to end - that's a narrower, opinionated case than
+"support every possible collector configuration."
+
+## Cloud IR infrastructure
+
+Don't have a pre-built physical/VM workstation for a case? [`infra/`](infra/)
+provisions one on demand: a Velociraptor offline collector uploads
+straight to per-case cloud storage (S3 or Azure Blob), a clean
+investigation VM spins up with that storage mounted as its `D:` drive, and
+when the case closes the VM is destroyed (storage persists, then archives
+to cold tier). TUI-driven end to end, no public IP or open inbound port on
+the host ever, and built to be handed to a partner organization to stand
+up in their own cloud account - see [`infra/README.md`](infra/README.md)
+for accounts/setup and [`infra/SECURITY.md`](infra/SECURITY.md) for the
+security model.
 
 ## Updating and maintaining this module
 
@@ -489,6 +512,14 @@ and his broader Rapid Endpoint Investigations workflow:
   detection into surrounding MFT/Registry/Amcache/Prefetch/browser activity
   to scope what happened, and what to check when there's no detection to
   start from.
+- ~~Disposable cloud infrastructure for cases without a pre-built
+  workstation~~ - done, see [`infra/`](infra/): a TUI-driven, per-case
+  investigation host (AWS or Azure) with evidence storage mounted as `D:`,
+  a case-scoped collector build that uploads straight to it, and
+  archival to cold storage on case close. Also inspired by Patterson
+  Cake's broader workflow (see `infra/README.md`'s intro) - a
+  Velociraptor *server* for mass deployment/threat hunting remains
+  out of scope.
 
 ## Contributing
 
