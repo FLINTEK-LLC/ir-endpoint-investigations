@@ -25,6 +25,25 @@ variable "subnet_id" {
   type        = string
 }
 
+variable "tools_bucket_name" {
+  description = "OPTIONAL S3 bucket holding your licensed KAPE as kape.zip. Blank means the host comes up without KAPE and without the parsing toolchain. Must NOT be this case's evidence bucket - see infra/README.md's Getting KAPE onto the host."
+  type        = string
+  default     = ""
+}
+
+variable "tools_zip_url" {
+  description = "OPTIONAL fallback to tools_bucket_name: any URL reachable without interactive sign-in."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "timezone_id" {
+  description = "Windows time zone for the investigation host. UTC by default - the right default for forensic work."
+  type        = string
+  default     = "UTC"
+}
+
 variable "enable_immutability" {
   description = "Enable S3 Object Lock (WORM) on this case's bucket. No default - decide deliberately per case."
   type        = bool

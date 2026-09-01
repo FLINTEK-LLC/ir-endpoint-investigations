@@ -48,6 +48,25 @@ variable "root_volume_size_gb" {
   default     = 150
 }
 
+variable "tools_bucket_name" {
+  description = "OPTIONAL S3 bucket holding licensed tooling this host cannot download itself - in practice KAPE, which Kroll gates behind licence acceptance. Blank (the default) means the host comes up without KAPE and without the parsing toolchain that depends on it. Deliberately NOT this case's evidence bucket: tooling in an evidence bucket muddies chain of custody, inherits any Object Lock retention, and gets lifecycle-transitioned to Glacier. The instance role is granted read-only on this bucket alone."
+  type        = string
+  default     = ""
+}
+
+variable "tools_zip_url" {
+  description = "OPTIONAL fallback to tools_bucket_name: any URL the host can fetch kape.zip from without interactive sign-in (an internal artifact repo, a pre-signed S3 URL). If the URL carries its own authorisation it lands in Terraform state, so prefer tools_bucket_name where you can."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "timezone_id" {
+  description = "Windows time zone ID. UTC by default, and deliberately so - a forensic host should record in UTC so timelines from endpoints in different zones line up and report timestamps are unambiguous. `tzutil /l` lists valid IDs."
+  type        = string
+  default     = "UTC"
+}
+
 variable "vpc_id" {
   description = "VPC to launch into."
   type        = string

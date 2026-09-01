@@ -13,7 +13,7 @@ try {
     net user Administrator "${admin_password}"
 
     Invoke-WebRequest -Uri "${fetch_script_url}" -OutFile 'C:\fetch-and-bootstrap.ps1'
-    & 'C:\fetch-and-bootstrap.ps1' -CaseId "${case_id}" -CloudProvider 'AWS' -StorageIdentifier "${bucket_name}" -Region "${region}" -RepoZipUrl "${repo_zip_url}"
+    & 'C:\fetch-and-bootstrap.ps1' -CaseId "${case_id}" -CloudProvider 'AWS' -StorageIdentifier "${bucket_name}" -Region "${region}" -RepoZipUrl "${repo_zip_url}" -ToolsStorageIdentifier "${tools_bucket}" -ToolsZipUrl "${tools_zip_url}" -TimeZoneId "${timezone_id}"
 } catch {
     $_ | Out-File -FilePath 'C:\ir-bootstrap-fetch.log' -Append
     throw

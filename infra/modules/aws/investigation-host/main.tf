@@ -60,6 +60,29 @@ resource "aws_iam_role_policy" "case_bucket_read" {
   })
 }
 
+# Read-only on the shared tooling bucket, exactly as for case evidence. A
+# separate policy from the case-bucket one so revoking either is independent.
+resource "aws_iam_role_policy" "tools_bucket_read" {
+  count = var.tools_bucket_name != "" ? 1 : 0
+  name  = "tools-bucket-read"
+  role  = aws_iam_role.host.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = ["arn:aws:s3:::${var.tools_bucket_name}"]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = ["arn:aws:s3:::${var.tools_bucket_name}/*"]
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "host" {
   name = "ir-case-${var.case_id}-host"
   role = aws_iam_role.host.name
@@ -111,6 +134,9 @@ resource "aws_instance" "host" {
     bucket_name      = var.bucket_name
     region           = data.aws_region.current.name
     admin_password   = var.admin_password
+    tools_bucket     = var.tools_bucket_name
+    tools_zip_url    = var.tools_zip_url
+    timezone_id      = var.timezone_id
   })
 
   tags = merge(var.tags, {

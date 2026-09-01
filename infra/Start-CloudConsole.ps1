@@ -518,6 +518,74 @@ function Format-AzureVmSize {
     return $s
 }
 
+function Invoke-AwsJson {
+    # Small wrapper so an aws CLI failure never throws out of a preflight -
+    # a diagnostic that cannot run must not block a deploy.
+    param([string[]]$CliArgs, [string]$AwsProfile)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $raw = & aws @CliArgs --profile $AwsProfile --output json 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $raw) { return $null }
+        return ($raw | ConvertFrom-Json)
+    } catch { return $null } finally { $ErrorActionPreference = $prev }
+}
+
+function Test-AwsAmiParameter {
+    # The Windows AMI comes from an AWS-managed SSM public parameter. If that
+    # name does not exist in the region the apply dies on a data source, which
+    # is a slow and cryptic way to learn you asked for an image AWS does not
+    # publish there. Windows Server 2025 in particular could not be confirmed
+    # from documentation, so check it rather than hope.
+    param([string]$Region, [string]$AwsProfile, [string]$ParameterName)
+    $r = Invoke-AwsJson -AwsProfile $AwsProfile -CliArgs @('ssm', 'get-parameters', '--names', $ParameterName, '--region', $Region)
+    if (-not $r) { return @{ Checked = $false; Ok = $true } }
+    $found = @($r.Parameters).Count -gt 0
+    return @{ Checked = $true; Ok = $found; Value = $(if ($found) { $r.Parameters[0].Value } else { $null }) }
+}
+
+function Test-AwsSubnetEgress {
+    # THE AWS failure mode. This host gets no public IP by design, so its
+    # subnet needs its own route to the internet - a NAT Gateway, or a
+    # transit/NVA route. A subnet whose route table only has the local CIDR
+    # will happily launch an instance that can never reach SSM, GitHub or S3,
+    # and the symptom is a host that boots and then simply never becomes
+    # manageable. Cheaper to detect here.
+    param([string]$SubnetId, [string]$Region, [string]$AwsProfile)
+
+    $rt = Invoke-AwsJson -AwsProfile $AwsProfile -CliArgs @(
+        'ec2', 'describe-route-tables', '--region', $Region,
+        '--filters', "Name=association.subnet-id,Values=$SubnetId")
+    if (-not $rt) { return @{ Checked = $false; HasEgress = $true; Via = 'unknown' } }
+
+    # A subnet with no explicit association uses the VPC main route table.
+    if (@($rt.RouteTables).Count -eq 0) {
+        $sn = Invoke-AwsJson -AwsProfile $AwsProfile -CliArgs @('ec2', 'describe-subnets', '--region', $Region, '--subnet-ids', $SubnetId)
+        if (-not $sn) { return @{ Checked = $false; HasEgress = $true; Via = 'unknown' } }
+        $vpcId = $sn.Subnets[0].VpcId
+        $rt = Invoke-AwsJson -AwsProfile $AwsProfile -CliArgs @(
+            'ec2', 'describe-route-tables', '--region', $Region,
+            '--filters', "Name=vpc-id,Values=$vpcId", 'Name=association.main,Values=true')
+        if (-not $rt) { return @{ Checked = $false; HasEgress = $true; Via = 'unknown' } }
+    }
+
+    foreach ($table in $rt.RouteTables) {
+        foreach ($route in $table.Routes) {
+            if ($route.DestinationCidrBlock -ne '0.0.0.0/0') { continue }
+            if ($route.NatGatewayId) { return @{ Checked = $true; HasEgress = $true; Via = "NAT Gateway $($route.NatGatewayId)" } }
+            if ($route.TransitGatewayId) { return @{ Checked = $true; HasEgress = $true; Via = "Transit Gateway $($route.TransitGatewayId)" } }
+            if ($route.NetworkInterfaceId -or $route.InstanceId) { return @{ Checked = $true; HasEgress = $true; Via = 'an appliance/NVA route' } }
+            if ($route.GatewayId -and $route.GatewayId -like 'igw-*') {
+                # An IGW route only helps an instance that HAS a public IP.
+                # This one deliberately does not, so this is a public subnet
+                # and the host will still have no path out.
+                return @{ Checked = $true; HasEgress = $false; Via = "an Internet Gateway ($($route.GatewayId)) - which does NOT work for a host with no public IP" }
+            }
+        }
+    }
+    return @{ Checked = $true; HasEgress = $false; Via = 'no 0.0.0.0/0 route at all' }
+}
+
 function Test-VmSizeAvailable {
     # Azure will happily plan a VM size your subscription cannot actually get,
     # then fail two minutes into apply with
@@ -642,13 +710,62 @@ function Invoke-CreateCase {
         $vars['region'] = Read-Choice -Prompt "AWS region:" -Items $script:AwsRegions -Default 'us-east-1' -AllowCustom -CustomPrompt 'AWS region'
         $vars['aws_profile'] = Read-Default -Prompt "AWS CLI profile" -Default 'ir-cloud'
         Write-Host "The subnet below needs its own outbound internet route (a NAT Gateway) - the investigation host has no public IP by design. Most existing/default VPCs already have this; see infra/README.md if you need to add one." -ForegroundColor Cyan
-        $vpcId = Read-Required -Prompt "VPC ID"
-        if (-not $vpcId) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
-        $vars['vpc_id'] = $vpcId
-        $subnetId = Read-Required -Prompt "Subnet ID (within that VPC, with NAT/internet egress)"
-        if (-not $subnetId) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
-        $vars['subnet_id'] = $subnetId
-        $vars['instance_type'] = Read-Default -Prompt "Instance type" -Default 't3.xlarge'
+        # List real VPCs/subnets rather than asking for pasted IDs, and mark
+        # which subnets actually have egress - the host has no public IP, so a
+        # subnet without a NAT route produces an instance that boots and then
+        # never becomes reachable.
+        Write-Host ""
+        Write-Host "Looking up VPCs in $($vars['region'])..." -ForegroundColor DarkGray
+        $vpcData = Invoke-AwsJson -AwsProfile $vars['aws_profile'] -CliArgs @('ec2', 'describe-vpcs', '--region', $vars['region'])
+        if ($vpcData -and @($vpcData.Vpcs).Count -gt 0) {
+            $vpcItems = $vpcData.Vpcs | ForEach-Object {
+                $nameTag = ($_.Tags | Where-Object { $_.Key -eq 'Name' } | Select-Object -First 1).Value
+                [pscustomobject]@{
+                    Label = ('{0,-24} {1,-18} {2}' -f $_.VpcId, $_.CidrBlock, $(if ($_.IsDefault) { '(default VPC)' } else { $nameTag }))
+                    Value = $_.VpcId
+                }
+            }
+            $vars['vpc_id'] = Read-Choice -Prompt "VPC:" -Items $vpcItems -DisplayProperty Label -ValueProperty Value -AllowCustom -CustomPrompt 'VPC ID'
+        } else {
+            Write-Host "Could not list VPCs (is the AWS profile configured?) - enter the ID by hand." -ForegroundColor Yellow
+            $vpcId = Read-Required -Prompt "VPC ID"
+            if (-not $vpcId) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
+            $vars['vpc_id'] = $vpcId
+        }
+
+        Write-Host "Looking up subnets and checking which have internet egress..." -ForegroundColor DarkGray
+        $subnetData = Invoke-AwsJson -AwsProfile $vars['aws_profile'] -CliArgs @(
+            'ec2', 'describe-subnets', '--region', $vars['region'],
+            '--filters', "Name=vpc-id,Values=$($vars['vpc_id'])")
+        if ($subnetData -and @($subnetData.Subnets).Count -gt 0) {
+            $subnetItems = $subnetData.Subnets | ForEach-Object {
+                $e = Test-AwsSubnetEgress -SubnetId $_.SubnetId -Region $vars['region'] -AwsProfile $vars['aws_profile']
+                $mark = if (-not $e.Checked) { '?' } elseif ($e.HasEgress) { 'egress OK' } else { 'NO EGRESS' }
+                [pscustomobject]@{
+                    Label = ('{0,-26} {1,-18} {2,-16} {3}' -f $_.SubnetId, $_.CidrBlock, $_.AvailabilityZone, $mark)
+                    Value = $_.SubnetId
+                }
+            }
+            $vars['subnet_id'] = Read-Choice -Prompt "Subnet for the investigation host:" -Items $subnetItems -DisplayProperty Label -ValueProperty Value -AllowCustom -CustomPrompt 'Subnet ID'
+        } else {
+            $subnetId = Read-Required -Prompt "Subnet ID (must have NAT/internet egress)"
+            if (-not $subnetId) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
+            $vars['subnet_id'] = $subnetId
+        }
+
+        $vars['instance_type'] = Read-Choice -Prompt "Instance type:" -Default 't3.xlarge' -AllowCustom -CustomPrompt 'Instance type' -Items @(
+            [pscustomobject]@{ Label = 't3.xlarge     4 vCPU, 16 GiB  burstable - the default'; Value = 't3.xlarge' }
+            [pscustomobject]@{ Label = 't3.large      2 vCPU,  8 GiB  burstable - cheaper plumbing test'; Value = 't3.large' }
+            [pscustomobject]@{ Label = 'm5.xlarge     4 vCPU, 16 GiB  fixed performance'; Value = 'm5.xlarge' }
+            [pscustomobject]@{ Label = 'm5.2xlarge    8 vCPU, 32 GiB  large collections'; Value = 'm5.2xlarge' }
+        ) -DisplayProperty Label -ValueProperty Value
+
+        Write-Host ""
+        Write-Host "OPTIONAL: an S3 bucket holding your licensed KAPE (kape.zip). Without it the" -ForegroundColor Cyan
+        Write-Host "host comes up with no KAPE and no parsing toolchain. Must NOT be this case's" -ForegroundColor Cyan
+        Write-Host "evidence bucket - see infra/README.md's \"Getting KAPE onto the host\"." -ForegroundColor Cyan
+        $toolsBucket = Read-Default -Prompt "Tools S3 bucket name (blank = skip)" -Default ''
+        if ($toolsBucket) { $vars['tools_bucket_name'] = $toolsBucket }
     } else {
         $envDir = $script:AzureEnvDir
         $vars['location'] = Read-Choice -Prompt "Azure region:" -Items $script:AzureRegions -Default 'eastus' -AllowCustom -CustomPrompt 'Azure region'
@@ -744,6 +861,38 @@ function Invoke-CreateCase {
             $vars['vm_size'] = Format-AzureVmSize $newSize
         } elseif ($sizeCheck.Checked) {
             Write-Host "$($vars['vm_size']) is available in $($vars['location'])." -ForegroundColor Green
+        }
+    }
+
+    if ($cloud -eq 'AWS') {
+        Write-Host ""
+        Write-Host "Checking the Windows Server AMI parameter exists in $($vars['region'])..." -ForegroundColor DarkGray
+        $amiParam = '/aws/service/ami-windows-latest/Windows_Server-2025-English-Full-Base'
+        $ami = Test-AwsAmiParameter -Region $vars['region'] -AwsProfile $vars['aws_profile'] -ParameterName $amiParam
+        if ($ami.Checked -and -not $ami.Ok) {
+            Write-Host "That AMI parameter does not exist in $($vars['region']):" -ForegroundColor Red
+            Write-Host "  $amiParam" -ForegroundColor Red
+            Write-Host "Windows Server 2025 may not be published there yet. List what is available with:" -ForegroundColor Yellow
+            Write-Host "  aws ssm get-parameters-by-path --path /aws/service/ami-windows-latest --region $($vars['region']) --query \"Parameters[].Name\" --output text | Select-String English-Full-Base" -ForegroundColor Yellow
+            Write-Host "then set windows_ami_ssm_parameter in modules/aws/investigation-host/variables.tf." -ForegroundColor Yellow
+            if (-not (Read-YesNo -Prompt "Continue anyway?" -Default $false)) { Write-Host "Cancelled - nothing was created." -ForegroundColor Yellow; return }
+        } elseif ($ami.Checked) {
+            Write-Host "AMI parameter resolves to $($ami.Value)." -ForegroundColor Green
+        }
+
+        Write-Host "Checking the subnet has internet egress..." -ForegroundColor DarkGray
+        $egress = Test-AwsSubnetEgress -SubnetId $vars['subnet_id'] -Region $vars['region'] -AwsProfile $vars['aws_profile']
+        if ($egress.Checked -and -not $egress.HasEgress) {
+            Write-Host ""
+            Write-Host "That subnet has no usable outbound route: $($egress.Via)." -ForegroundColor Red
+            Write-Host "This host gets NO public IP by design, so it needs a NAT Gateway (or equivalent)." -ForegroundColor Yellow
+            Write-Host "Without one it will boot, fail to reach SSM and GitHub, and never become" -ForegroundColor Yellow
+            Write-Host "manageable - while still billing. See infra/TESTING-AWS.md for creating one." -ForegroundColor Yellow
+            if (-not (Read-YesNo -Prompt "Continue anyway (the host will almost certainly be unreachable)?" -Default $false)) {
+                Write-Host "Cancelled - nothing was created." -ForegroundColor Yellow; return
+            }
+        } elseif ($egress.Checked) {
+            Write-Host "Subnet egress OK via $($egress.Via)." -ForegroundColor Green
         }
     }
 

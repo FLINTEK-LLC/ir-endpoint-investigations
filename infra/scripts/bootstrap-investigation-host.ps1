@@ -267,26 +267,41 @@ Write-Host ""
 # Deliberately a SEPARATE account from case evidence - staging tools in an
 # evidence container muddies chain of custody, inherits any WORM retention,
 # and gets lifecycle-archived to cold tier.
-if ($ToolsStorageIdentifier -and $CloudProvider -eq 'Azure') {
+if ($ToolsStorageIdentifier) {
     Write-Host ""
     Write-Host "=== Staging licensed tooling from $ToolsStorageIdentifier ==="
     try {
-        $toolsParts = $ToolsStorageIdentifier -split '/', 2
-        $toolsAccount = $toolsParts[0]
-        $toolsContainer = $toolsParts[1]
+        # Same ambient-identity pattern as the [case] remote, per cloud:
+        # env_auth on AWS reads the instance role via IMDS, use_msi on Azure
+        # reads the VM's managed identity. Neither writes a credential to
+        # disk. On AWS the identifier is just a bucket name; on Azure it is
+        # "<account>/<container>".
+        if ($CloudProvider -eq 'AWS') {
+            $toolsPrefix = $ToolsStorageIdentifier
+            Add-Content -LiteralPath $rcloneConfigPath -Value @"
 
-        # Second rclone remote, same ambient-identity pattern as [case].
-        Add-Content -LiteralPath $rcloneConfigPath -Value @"
+[tools]
+type = s3
+provider = AWS
+env_auth = true
+region = $Region
+"@
+        } else {
+            $toolsParts = $ToolsStorageIdentifier -split '/', 2
+            $toolsAccount = $toolsParts[0]
+            $toolsPrefix = $toolsParts[1]
+            Add-Content -LiteralPath $rcloneConfigPath -Value @"
 
 [tools]
 type = azureblob
 account = $toolsAccount
 use_msi = true
 "@
+        }
 
         $kapeStaging = Join-Path $env:TEMP 'kape-staging'
         New-Item -ItemType Directory -Path $kapeStaging -Force -ErrorAction SilentlyContinue | Out-Null
-        & $rcloneExe copy "tools:$toolsContainer/kape.zip" $kapeStaging --config $rcloneConfigPath
+        & $rcloneExe copy "tools:$toolsPrefix/kape.zip" $kapeStaging --config $rcloneConfigPath
         $kapeZip = Join-Path $kapeStaging 'kape.zip'
         if (Test-Path -LiteralPath $kapeZip) {
             if (Install-KapeFromZip -ZipPath $kapeZip) {

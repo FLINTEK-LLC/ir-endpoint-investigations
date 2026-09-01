@@ -60,12 +60,15 @@ resource "random_password" "admin" {
 module "investigation_host" {
   source = "../../modules/aws/investigation-host"
 
-  case_id        = var.case_id
-  bucket_name    = module.case_storage.bucket_name
-  bucket_arn     = module.case_storage.bucket_arn
-  vpc_id         = var.vpc_id
-  subnet_id      = var.subnet_id
-  instance_type  = var.instance_type
-  admin_password = random_password.admin.result
-  tags           = local.tags
+  case_id           = var.case_id
+  bucket_name       = module.case_storage.bucket_name
+  bucket_arn        = module.case_storage.bucket_arn
+  vpc_id            = var.vpc_id
+  subnet_id         = var.subnet_id
+  instance_type     = var.instance_type
+  tools_bucket_name = var.tools_bucket_name
+  tools_zip_url     = var.tools_zip_url
+  timezone_id       = var.timezone_id
+  admin_password    = random_password.admin.result
+  tags              = local.tags
 }
