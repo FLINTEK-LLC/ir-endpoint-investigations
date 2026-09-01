@@ -447,6 +447,27 @@ security model.
     version, where it came from and why it is on the box - so "which parser
     version touched this evidence?" has an answer months later.
 
+  **Viewing the review workbook.** `New-ReviewWorkbook.ps1` builds a real
+  `.xlsx` with or without Microsoft Excel (`-Engine Auto` uses Excel COM when
+  registered, ImportExcel/EPPlus otherwise), so a host with no Office install
+  still gets the merged workbook rather than a folder of CSVs. To *read* it
+  there, **Timeline Explorer already works** - it ships with the EZ Tools GUI
+  suite and opens CSV and Excel files, and it is purpose-built for exactly
+  this filter/group/sort review.
+
+  `LibreOffice` is in the config as an Optional, disabled entry. Enable it if
+  you need to open Office documents recovered **from a collection**, which
+  nothing else here does. Two caveats worth weighing first: it is a large
+  document-parsing attack surface on a machine that handles attacker
+  artifacts, and opening a hostile document is a realistic way to get burned.
+  If you enable it, turn macros off before opening anything from evidence:
+
+  ```powershell
+  # Tools > Options > LibreOffice Calc > Security > Macro Security > Very High
+  # or set it headlessly for all users:
+  reg add "HKLM\SOFTWARE\Policies\LibreOffice\org.openoffice.Office.Common\Security\Scripting" /v MacroSecurityLevel /t REG_DWORD /d 3 /f
+  ```
+
   The KAPE-coupled toolchain (EZ Tools CLI, Hayabusa, Chainsaw, Hindsight,
   RegRipper, NirSoft) deliberately stays in `Manage-Tools.ps1`: those are tied
   to KAPE's own module layout and each has real per-tool quirks that a generic

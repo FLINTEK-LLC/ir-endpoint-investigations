@@ -199,6 +199,23 @@
       "Verify": {
         "Path": "notepadpp\\notepad++.exe"
       }
+    },
+    {
+      "Name": "LibreOffice",
+      "Tier": "Optional",
+      "Enabled": false,
+      "Why": "Opens the review workbook, and - more usefully - opens Office documents recovered FROM a collection, which nothing else on this host does. Disabled by default for two reasons: Timeline Explorer (already installed with the EZ Tools GUI suite) reads xlsx and is purpose-built for this review workflow, and a full office suite is a large document-parsing attack surface on a machine that handles attacker artifacts. If you enable it, set macro security to Very High before opening anything from a collection - see README.md.",
+      "$versionNote": "Pinned deliberately rather than resolved to 'latest': a forensic workstation benefits from a known, reproducible tool version, and the manifest records which one parsed a document. Bump this URL to move versions - listings are at https://download.documentfoundation.org/libreoffice/stable/",
+      "Source": {
+        "Type": "Url",
+        "Url": "https://download.documentfoundation.org/libreoffice/stable/26.2.5/win/x86_64/LibreOffice_26.2.5_Win_x86-64.msi"
+      },
+      "Install": {
+        "Type": "Msi"
+      },
+      "Verify": {
+        "Registry": "LibreOffice*"
+      }
     }
   ]
 }
