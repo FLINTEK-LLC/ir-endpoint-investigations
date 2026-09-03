@@ -117,21 +117,45 @@ Quotas > EC2 > *Running On-Demand Standard instances*), or pick `t3.large`
 
 ## Step 5 - Create a test VPC with a NAT Gateway
 
-The console never creates your network. The AWS console's **VPC > Create VPC
-> VPC and more** wizard is by far the easiest way to get a correct one:
+There is a script for this, because the ordering is fiddly and getting it
+wrong produces a network that looks correct and routes nowhere:
 
-1. **VPC and more**, name `ir-test`.
-2. IPv4 CIDR `10.30.0.0/16`.
-3. **1** Availability Zone, **1** public subnet, **1** private subnet.
-4. **NAT gateways: In 1 AZ** - this is the part that matters.
-5. Create.
+```powershell
+.\scripts\New-AwsTestNetwork.ps1
+```
 
-That gives you a private subnet whose route table points `0.0.0.0/0` at a NAT
-Gateway, which is exactly what the investigation host needs. **The NAT Gateway
-starts billing immediately** (~$0.045/hr).
+It creates a VPC (`10.30.0.0/16`), a public and a private subnet, an Internet
+Gateway, an Elastic IP, and a **NAT Gateway in the public subnet serving the
+private one** - then waits for that NAT Gateway to actually become available
+before adding the private subnet's `0.0.0.0/0` route, since the route cannot
+be created until it is. It prints the VPC and private subnet IDs you need at
+Step 8.
 
-You do not need to note the IDs - `[2]` lists VPCs and subnets and marks which
-subnets have egress.
+Three things it exists to get right: the NAT Gateway belongs in the **public**
+subnet even though it serves the private one, the route must wait for it, and
+DNS hostnames must be enabled on the VPC or SSM cannot resolve its endpoints.
+
+**The NAT Gateway bills from the moment it is created** (~$0.045/hr). Tear the
+whole network down with:
+
+```powershell
+.\scripts\New-AwsTestNetwork.ps1 -Delete
+```
+
+Everything is tagged `Project=ir-endpoint-investigations`, which is how
+`-Delete` finds it - it will not touch a VPC you created another way.
+
+<details>
+<summary>Prefer the console? (equivalent click-through)</summary>
+
+**VPC** > **Create VPC** > **VPC and more**: name `ir-test`, IPv4
+`10.30.0.0/16`, **1** AZ, **1** public subnet, **1** private subnet,
+**NAT gateways: In 1 AZ**. Use the *private* subnet at Step 8.
+
+</details>
+
+You do not need to note IDs by hand - `[2]` lists VPCs and subnets and marks
+which subnets have egress.
 
 ## Step 6 - (Optional) Stage KAPE in S3
 
@@ -242,9 +266,17 @@ object versions. If destroy complains, empty it first:
 aws s3 rm s3://ir-case-awstest-01 --recursive --profile ir-cloud
 ```
 
-Then delete the VPC **including its NAT Gateway** - VPC console > select
-`ir-test` > Actions > Delete VPC, which offers to remove the NAT Gateway and
-release its Elastic IP. Finally confirm nothing survives:
+Then delete the network, NAT Gateway and Elastic IP together:
+
+```powershell
+cd C:\Tools\Projects\ir-endpoint-investigations\infra
+```
+
+```powershell
+.\scripts\New-AwsTestNetwork.ps1 -Delete
+```
+
+Finally confirm nothing survives:
 
 ```powershell
 aws ec2 describe-nat-gateways --region us-east-1 --profile ir-cloud --query "NatGateways[?State!='deleted'].NatGatewayId" --output text
