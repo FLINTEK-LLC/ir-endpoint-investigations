@@ -40,7 +40,14 @@ param(
     # Optional plain URL to fetch kape.zip from, used only when
     # ToolsStorageIdentifier is empty. May itself carry authorisation
     # (a share link / SAS), so treat it as a secret.
-    [string]$ToolsZipUrl = ''
+    [string]$ToolsZipUrl = '',
+
+    # Forwarded straight through to bootstrap-investigation-host.ps1. This
+    # script is a pass-through shim, so every parameter the launchers send
+    # must be declared here even when it means nothing to this file - an
+    # undeclared one is a hard ParameterBindingException that kills the whole
+    # bootstrap before it starts.
+    [string]$TimeZoneId = 'UTC'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -70,7 +77,7 @@ try {
     }
 
     Write-Log "Handing off to $bootstrapScript"
-    & $bootstrapScript -CaseId $CaseId -CloudProvider $CloudProvider -StorageIdentifier $StorageIdentifier -Region $Region -RepoRoot $repoRoot.FullName -ToolsStorageIdentifier $ToolsStorageIdentifier -ToolsZipUrl $ToolsZipUrl *>> $logFile
+    & $bootstrapScript -CaseId $CaseId -CloudProvider $CloudProvider -StorageIdentifier $StorageIdentifier -Region $Region -RepoRoot $repoRoot.FullName -ToolsStorageIdentifier $ToolsStorageIdentifier -ToolsZipUrl $ToolsZipUrl -TimeZoneId $TimeZoneId *>> $logFile
 
     Write-Log "bootstrap-investigation-host.ps1 exited $LASTEXITCODE"
 } catch {
