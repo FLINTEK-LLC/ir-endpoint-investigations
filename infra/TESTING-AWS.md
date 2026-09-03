@@ -259,12 +259,22 @@ terraform workspace select awstest-01
 terraform destroy -auto-approve -var="case_id=awstest-01" -var="region=us-east-1" -var="vpc_id=<vpc>" -var="subnet_id=<subnet>" -var="enable_immutability=false"
 ```
 
-S3 buckets with versioning enabled will refuse to delete while they hold
-object versions. If destroy complains, empty it first:
+The evidence bucket has versioning enabled, so it will refuse to delete while
+it holds object versions - and `aws s3 rm --recursive` does **not** clear
+them: it removes current versions and leaves every noncurrent version and
+delete marker behind, so it looks like it worked and the bucket delete still
+fails. Use:
 
 ```powershell
-aws s3 rm s3://ir-case-awstest-01 --recursive --profile ir-cloud
+.\scripts\Remove-AwsCaseStorage.ps1 -BucketName ir-case-awstest-01
 ```
+
+It shows the version count and total size, asks you to type the bucket name,
+then removes every version and delete marker before deleting the bucket.
+**This destroys the evidence** - there is no undo. If the case was created
+with immutability enabled, versions still under retention will refuse to
+delete and the script says so rather than pretending otherwise; that is
+Object Lock working as intended.
 
 Then delete the network, NAT Gateway and Elastic IP together:
 
