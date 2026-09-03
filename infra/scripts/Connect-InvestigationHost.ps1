@@ -162,8 +162,15 @@ if ($CloudProvider -eq 'AWS') {
     $instanceId = $tfOut.instance_id
     $region = $tfOut.region
     $adminPassword = $tfOut.admin_password
+    # Both are checked, not just the instance: an empty --region reaches the
+    # CLI as a flag with no value and fails with exit code 252 - the same
+    # "invalid parameters" code a malformed --parameters gives, which makes
+    # the two indistinguishable from the exit code alone.
     if (-not $instanceId) {
-        throw "Missing expected Terraform output (instance_id) for case '$CaseId'."
+        throw "Missing expected Terraform output (instance_id) for case '$CaseId'. Has 'terraform apply' completed for this case?"
+    }
+    if (-not $region) {
+        throw "Missing expected Terraform output (region) for case '$CaseId'. Check: terraform output region (in environmentsws-case, workspace $CaseId)."
     }
 
     if (-not (Get-Command session-manager-plugin.exe -ErrorAction SilentlyContinue) -and
