@@ -14,7 +14,7 @@ Information Security); see the root [README](../README.md) for more on
 his broader Rapid Endpoint Investigations methodology, which this whole
 repo draws on.
 
-**Fastest way in:** `.\Start-CloudConsole.ps1` - a numbered menu covering
+**Fastest way in:** `.\Start-CloudConsole.ps1` - a menu covering
 every action below (setup, create a case, build its collector, connect,
 destroy, archive) with no Terraform or cloud CLI flags to remember. See
 Quick start below.
@@ -24,6 +24,18 @@ cloud - pick whichever your organization already has an account on. A
 Velociraptor *server* (for mass deployment/threat hunting across many
 endpoints) is intentionally out of scope here; this covers only the
 single-case investigation host + evidence storage workflow.
+
+## Getting around the console
+
+Arrow keys move the selection, Enter chooses, Esc cancels, and typing a
+number or a menu's letter key jumps straight to it. The default entry is
+marked `(default)` and coloured, so pressing Enter always does the visible
+thing.
+
+Where raw key input is unavailable - piped stdin, the ISE, the VS Code
+PowerShell host - the menu falls back to the numbered prompt this project
+used before, accepting the same input and returning the same values. Both
+consoles share `..\scripts\IRPrompt.ps1`; see its header for the details.
 
 ## Accounts, tokens, and secrets
 

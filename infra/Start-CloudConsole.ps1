@@ -570,6 +570,17 @@ function Get-AvailableVmSizes {
     # rather than assuming any particular family exists.
     param([string]$Location, [int]$MinVCpu = 2, [int]$MaxVCpu = 8, [int]$MinMemoryGb = 8)
 
+    # `az vm list-skus` for one region takes five to fifteen seconds and returns
+    # several megabytes. Case creation is retried often enough - a bad subnet, a
+    # quota error, a typo - that paying that on every attempt is the single
+    # most noticeable delay in the console. The answer cannot change while the
+    # console is open in any way that matters, so cache it per region for the
+    # life of the process. Restarting the console re-queries.
+    if (-not $script:VmSizeCache) { $script:VmSizeCache = @{} }
+    if ($script:VmSizeCache.ContainsKey($Location)) {
+        return $script:VmSizeCache[$Location]
+    }
+
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -607,9 +618,14 @@ function Get-AvailableVmSizes {
         }
     }
 
-    return @($candidates |
-        Sort-Object HasTempDisk, VCpu, Name |
-        Select-Object -First 10)
+    # Cached only on a successful lookup - the early `return @()` paths above
+    # deliberately bypass this, so a transient az failure is retried next time
+    # rather than remembered as "no sizes available in this region".
+    $result = @($candidates |
+            Sort-Object HasTempDisk, VCpu, Name |
+            Select-Object -First 10)
+    $script:VmSizeCache[$Location] = $result
+    return $result
 }
 
 function Invoke-CreateCase {

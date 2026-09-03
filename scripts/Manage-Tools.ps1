@@ -157,23 +157,40 @@ function Get-RepoFolderZip {
     # during Expand-Archive, which git handles fine with core.longpaths.
     param([string]$Repo, [string]$Branch, [string]$SubFolder, [string]$Dest)
     $tmp = Join-Path $env:TEMP ("g" + [guid]::NewGuid().ToString('N').Substring(0, 12))
+
+    # try/finally rather than restoring $ErrorActionPreference by hand on each
+    # exit path. The hand-rolled version restored it on four separate lines and
+    # still leaked 'Continue' into the rest of the run if anything between them
+    # threw unexpectedly - which silently disarms error handling for every
+    # later tool install. The finally also removes the partial clone (a failed
+    # git clone otherwise leaves a directory in TEMP forever) and guarantees
+    # the Pop-Location, so an exception cannot corrupt the location stack.
     $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    git -c core.longpaths=true clone --depth 1 --branch $Branch --single-branch --filter=blob:none --sparse "https://github.com/$Repo.git" $tmp 2>$null
-    if ($LASTEXITCODE -ne 0) { $ErrorActionPreference = $prevEAP; throw "git clone of $Repo failed (exit $LASTEXITCODE)" }
-    if ($SubFolder -ne '.') {
-        Push-Location $tmp
-        git -c core.longpaths=true sparse-checkout set $SubFolder 2>$null
-        $scExit = $LASTEXITCODE
-        Pop-Location
+    $pushed = $false
+    try {
+        $ErrorActionPreference = 'Continue'
+        git -c core.longpaths=true clone --depth 1 --branch $Branch --single-branch --filter=blob:none --sparse "https://github.com/$Repo.git" $tmp 2>$null
+        if ($LASTEXITCODE -ne 0) { throw "git clone of $Repo failed (exit $LASTEXITCODE)" }
+        if ($SubFolder -ne '.') {
+            Push-Location $tmp
+            $pushed = $true
+            git -c core.longpaths=true sparse-checkout set $SubFolder 2>$null
+            $scExit = $LASTEXITCODE
+            Pop-Location
+            $pushed = $false
+            if ($scExit -ne 0) { throw "git sparse-checkout of $SubFolder in $Repo failed (exit $scExit)" }
+            $srcFolder = Join-Path $tmp $SubFolder
+        } else {
+            $srcFolder = $tmp
+        }
+        if (-not (Test-Path $srcFolder)) { throw "Folder '$SubFolder' not found in $Repo@$Branch clone" }
+    } catch {
+        if ($pushed) { Pop-Location }
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    } finally {
         $ErrorActionPreference = $prevEAP
-        if ($scExit -ne 0) { throw "git sparse-checkout of $SubFolder in $Repo failed (exit $scExit)" }
-        $srcFolder = Join-Path $tmp $SubFolder
-    } else {
-        $ErrorActionPreference = $prevEAP
-        $srcFolder = $tmp
     }
-    if (-not (Test-Path $srcFolder)) { throw "Folder '$SubFolder' not found in $Repo@$Branch clone" }
     if (Test-Path $Dest) { Remove-Item -LiteralPath $Dest -Recurse -Force }
     New-Item -ItemType Directory -Path (Split-Path -Parent $Dest) -Force -ErrorAction SilentlyContinue | Out-Null
     if ($SubFolder -ne '.') {

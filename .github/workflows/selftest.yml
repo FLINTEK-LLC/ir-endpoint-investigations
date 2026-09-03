@@ -1,0 +1,62 @@
+name: Self-test
+
+# The self-test is offline by design - no cloud credentials, no network - so it
+# can run on every push without secrets and without costing anything. Anything
+# that needs a real AWS or Azure account is deliberately out of scope here and
+# lives in infra/TESTING.md and infra/TESTING-AWS.md as a manual procedure.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    # windows-latest, not ubuntu: these are Windows PowerShell 5.1 scripts and
+    # several checks depend on Windows-only behaviour (the PowerShell AST
+    # parser, CRLF handling, ConsoleHost detection).
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run offline self-test
+        shell: powershell
+        run: .\scripts\Invoke-SelfTest.ps1
+
+      - name: Verify both consoles start and quit
+        shell: powershell
+        run: |
+          # Piped stdin means Read-Choice takes its numbered fallback, which is
+          # exactly the path a CI runner and any scripted caller use. If the
+          # fallback ever stopped accepting a typed value, 'Q' would not quit
+          # and this step would hang until the job timed out.
+          $ErrorActionPreference = 'Stop'
+          'Q' | powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Start-IRConsole.ps1 | Out-Null
+          'Q' | powershell -NoProfile -ExecutionPolicy Bypass -File .\infra\Start-CloudConsole.ps1 | Out-Null
+          Write-Host "Both consoles started and quit cleanly."
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive infra
+
+      - name: terraform validate
+        # -backend=false so init needs no credentials and no state backend.
+        # validate checks the configuration is internally consistent; it cannot
+        # and does not talk to AWS or Azure.
+        shell: bash
+        run: |
+          set -e
+          for d in infra/environments/*/; do
+            echo "== $d"
+            terraform -chdir="$d" init -backend=false -input=false >/dev/null
+            terraform -chdir="$d" validate
+          done

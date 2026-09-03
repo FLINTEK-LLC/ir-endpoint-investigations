@@ -1,14 +1,16 @@
 # IR Endpoint Investigations
 
+[![Self-test](https://github.com/FLINTEK-LLC/ir-endpoint-investigations/actions/workflows/selftest.yml/badge.svg)](https://github.com/FLINTEK-LLC/ir-endpoint-investigations/actions/workflows/selftest.yml)
+
 A KAPE-based toolkit for triaging Windows endpoint forensic collections. Point
 it at a collection, get back a parsed, organized set of timelines, registry
 artifacts, event log detections, and browser history - ready to review in
 standard DFIR tooling.
 
 **Fastest way in:** clone the repo and run `.\scripts\Start-IRConsole.ps1` -
-a numbered menu that covers every action in this README (setup, parsing a
-host or a case, keeping tools updated) with no flags to remember. See Quick
-start below.
+a menu covering every action in this README (setup, parsing a host or a case,
+keeping tools updated) with no flags to remember. Navigate it with the arrow
+keys, or type the number as before. See Quick start below.
 
 It's built as a [KAPE](https://www.kroll.com/kape) Compound Module: one module
 you select in gKAPE (or pass on the command line) that runs KAPE's own
@@ -108,6 +110,39 @@ open the review workbook when done, and so on - so there's nothing to
 memorize. It's a thin front end: every option just calls the same script
 you'd otherwise run directly, so nothing here is different logic from the
 command-line path below.
+
+### Getting around the console
+
+Both consoles in this project - `scripts\Start-IRConsole.ps1` here and
+`infra\Start-CloudConsole.ps1` for the cloud side - share one set of prompts
+(`scripts\IRPrompt.ps1`) and behave identically:
+
+| Key | Does |
+|---|---|
+| Up / Down | Move the selection |
+| Page Up / Page Down, Home / End | Jump |
+| `1`-`9`, or a menu's letter key | Jump straight to that entry |
+| Enter | Choose the highlighted entry |
+| Esc | Cancel the prompt (at the top level, redraws the menu) |
+
+The current selection is highlighted and the default entry is marked
+`(default)` and coloured, so pressing Enter always does the visible thing.
+Free-text prompts colour their default too - `Tools root [C:\Tools]:` - so
+"what happens if I just press Enter" never requires guessing.
+
+**It degrades on purpose.** Arrow-key selection needs a real console: raw key
+reads and cursor positioning are unavailable when input is piped, and both the
+ISE and the VS Code PowerShell host mishandle them. In those cases the menu
+falls back to the numbered prompt this project used before, which accepts the
+same input and returns the same values. Scripted and piped callers are
+unaffected, which is what lets CI drive the menus:
+
+```powershell
+'Q' | powershell -File .\scripts\Start-IRConsole.ps1
+```
+
+Long lists (VM sizes, regions) scroll inside a fixed viewport rather than
+running off the bottom of the window.
 
 ### Or drive it directly with flags (scripting/automation)
 
@@ -229,9 +264,13 @@ standalone against existing results):
   artifact**, each sorted chronologically, with AutoFilter on, the header row
   frozen, and columns autofit - every sheet is immediately filterable, no
   manual setup step. This is the actual fix for tab-switching between output
-  folders during first-pass review. Requires Excel installed on the
-  workstation running the parse (uses COM automation); skips itself with a
-  clear message otherwise. `<Host>` comes from the hostname Velociraptor
+  folders during first-pass review. **Excel is not required**: it uses Excel
+  via COM when it's installed, and otherwise falls back to the ImportExcel
+  module (EPPlus), which writes the same `.xlsx` - frozen header, AutoFilter
+  and all - with no Office install. That fallback is what makes the workbook
+  work on a freshly built cloud investigation host, where Excel is never
+  present. Force one engine with `-Engine Excel` or `-Engine ImportExcel`; the
+  default `Auto` picks whichever is available and says which it used. `<Host>` comes from the hostname Velociraptor
   itself recorded at collection time (`client_info.json`), not the collection
   folder's name, so it's accurate even if an analyst renamed the folder -
   this keeps multiple hosts' workbooks distinguishable when several are open
@@ -324,6 +363,9 @@ enormous across many hosts - so it's still worth reviewing each host's own
 ## Repository layout
 
 ```
+.github/workflows/
+  selftest.yml               CI: the offline self-test on Windows, plus
+                              terraform fmt/validate. No cloud credentials
 Modules/!IR/
   IR_00_ToolVerify.mkape     Custom - runs Manage-Tools.ps1 -Mode Verify
   IR_10_Hayabusa_OfflineEventLogs.mkape  Custom - corrected replacement for KAPE's
@@ -349,9 +391,16 @@ scripts/
   Get-EvtxTriage.ps1         Fast triage: curated Event IDs within a date window
   Get-BroaderBrowserHistory.ps1  Fast triage: NirSoft browser history/downloads for
                               non-Chromium browsers, against the raw uploads\ tree
+  IRPrompt.ps1               Shared console prompts for both menus - arrow-key
+                              selection, highlighted defaults, and the numbered
+                              fallback for hosts without raw key input
+  Invoke-SelfTest.ps1        Offline self-test: syntax, prompt logic, console
+                              wiring, and the array/null contracts. No cloud
+                              account, no credentials, runs in seconds
   New-ReviewWorkbook.ps1     Merges the triage + highest-signal outputs into one
-                              ReviewWorkbook.xlsx (one worksheet per artifact) -
-                              requires Excel installed (COM automation)
+                              ReviewWorkbook.xlsx (one worksheet per artifact).
+                              Uses Excel via COM if present, ImportExcel/EPPlus
+                              if not - no Office install required
   New-ReviewBundle.ps1       Same outputs as above, copied into one Review\ folder
                               instead of merged - no Excel required, always runs
   Start-CaseParse.ps1        Runs Run-IRParse.ps1 across every host under one case
@@ -519,10 +568,12 @@ and his broader Rapid Endpoint Investigations workflow:
   [secure-cake/rapid-endpoint-investigations](https://github.com/secure-cake/rapid-endpoint-investigations)'s
   `rtw-script` uses - with prompts suppressed programmatically instead of
   needing a click-through, and explicit COM object cleanup so it doesn't
-  leave orphaned `EXCEL.EXE` processes behind. Requires Excel installed;
+  leave orphaned `EXCEL.EXE` processes behind. Excel is no longer required -
+  the ImportExcel module (EPPlus) writes the same workbook where Excel is
+  absent, which is what a cloud investigation host always is.
   [`New-ReviewBundle.ps1`](scripts/New-ReviewBundle.ps1) (a folder of the same
   CSVs, no merge) remains as a dependency-free fallback and always runs
-  regardless of whether Excel is present.
+  regardless.
 - ~~Live system state at collection time, not just file artifacts~~ - done,
   see [`velociraptor/`](velociraptor/) and "Live system state at collection
   time" above: recommended built-in Velociraptor artifacts
@@ -562,6 +613,45 @@ and his broader Rapid Endpoint Investigations workflow:
   Cake's broader workflow (see `infra/README.md`'s intro) - a
   Velociraptor *server* for mass deployment/threat hunting remains
   out of scope.
+
+## Development and testing
+
+```powershell
+.\scripts\Invoke-SelfTest.ps1
+```
+
+Runs in seconds, needs no cloud account and no credentials, and is what CI
+runs on every push. It checks four things, all chosen because each one
+represents a class of bug that actually shipped here:
+
+1. **Syntax** - every `.ps1` in the repo parses.
+2. **Prompt logic** - the shared picker's selection maths and key handling,
+   including the negative-modulo wrap (`-1 % 5` is `-1` in PowerShell, so the
+   obvious implementation walks off the start of the list) and the rule that a
+   section header can never hold the selection.
+3. **Console wiring** - every menu key has a dispatch branch, every script a
+   console invokes exists, and **every flag it passes is a declared parameter
+   of the target script**. That last one is the important one: forwarding
+   `-TimeZoneId` to a script that never declared it is a hard
+   `ParameterBindingException`, and it killed a VM bootstrap fifteen minutes
+   into a paid deploy before this check existed.
+4. **Array and null contracts** - `@($null)` is a **one**-element array in
+   PowerShell, so an "is this empty?" check built on an omitted JSON property
+   silently reports one phantom item. That produced `delete-object --key ''`
+   against a real S3 bucket, and would have reported phantom billable
+   resources during teardown verification. Every cloud-API enumeration in the
+   repo is asserted to filter nulls.
+
+The suite is mutation-tested: deliberately renaming a dispatched function,
+un-filtering an enumeration, and passing an undeclared flag were each
+confirmed to fail it. A test suite that has never failed proves nothing.
+
+**What it does not cover:** anything requiring a live AWS or Azure account.
+Those paths are exercised by hand and are marked explicitly in
+[`infra/TESTING.md`](infra/TESTING.md) and
+[`infra/TESTING-AWS.md`](infra/TESTING-AWS.md). Terraform is checked with
+`fmt -check` and `validate` (which need no credentials); a real `apply` is
+never run in CI.
 
 ## Contributing
 
