@@ -172,30 +172,53 @@ if ($CloudProvider -eq 'AWS') {
     }
 
     Write-Host "Starting SSM port-forwarding tunnel: localhost:$LocalPort -> $instanceId`:3389 ..."
-    $ssmParams = ConvertTo-Json -Compress -InputObject @{
-        host           = @('localhost')
-        portNumber     = @('3389')
-        localPortNumber = @("$LocalPort")
-    }
+
+    # Parameters go as AWS CLI SHORTHAND, not JSON. Start-Process delivers
+    # -ArgumentList by joining it into one command line and strips embedded
+    # double quotes on the way - confirmed directly, the JSON arrived as
+    # {host:[localhost],portNumber:[3389]} with every quote gone, which the
+    # CLI rejects with exit code 252 (invalid parameters). Shorthand has no
+    # quotes or braces to lose.
+    #
+    # AWS-StartPortForwardingSession (not ...ToRemoteHost) is the right
+    # document here: we are forwarding a port ON the instance, not through
+    # it to some third host, so it needs no host parameter at all.
     $tunnelArgs = @(
         'ssm', 'start-session',
         '--target', $instanceId,
-        '--document-name', 'AWS-StartPortForwardingSessionToRemoteHost',
-        '--parameters', $ssmParams,
+        '--document-name', 'AWS-StartPortForwardingSession',
+        '--parameters', "portNumber=3389,localPortNumber=$LocalPort",
         '--profile', $AwsProfile,
         '--region', $region
     )
-    # Runs as a separate visible process (not a background job) so its own
-    # console shows connection status/errors, and closing that window is an
-    # obvious, physical way to end the tunnel - mirrors how a VPN client's
-    # own status window works, rather than hiding a job the operator can't
-    # easily see or kill.
-    $tunnelProcess = Start-Process -FilePath 'aws' -ArgumentList $tunnelArgs -PassThru
-    Write-Host "Tunnel running in a separate window (PID $($tunnelProcess.Id)). Waiting for it to come up..."
-    Start-Sleep -Seconds 4
+
+    # Capture the tunnel output. Previously this ran in its own window which
+    # closed the instant it failed, so the actual error was unreadable and
+    # all the operator saw was an exit code.
+    $tunnelOut = Join-Path $env:TEMP "ssm-tunnel-$CaseId.out.log"
+    $tunnelErr = Join-Path $env:TEMP "ssm-tunnel-$CaseId.err.log"
+    $tunnelProcess = Start-Process -FilePath 'aws' -ArgumentList $tunnelArgs -PassThru `
+        -RedirectStandardOutput $tunnelOut -RedirectStandardError $tunnelErr
+    Write-Host "Tunnel starting (PID $($tunnelProcess.Id))..."
+    Start-Sleep -Seconds 5
 
     if ($tunnelProcess.HasExited) {
-        throw "SSM tunnel process exited immediately (exit code $($tunnelProcess.ExitCode)) - check the tunnel window's output above."
+        Write-Host ""
+        Write-Host "The SSM tunnel exited immediately (code $($tunnelProcess.ExitCode))." -ForegroundColor Red
+        foreach ($logPath in @($tunnelErr, $tunnelOut)) {
+            $text = (Get-Content -LiteralPath $logPath -Raw -ErrorAction SilentlyContinue)
+            if ($text -and $text.Trim()) {
+                Write-Host "--- $(Split-Path $logPath -Leaf) ---" -ForegroundColor DarkGray
+                Write-Host $text.Trim()
+            }
+        }
+        Write-Host ""
+        Write-Host "Most likely causes, in order:" -ForegroundColor Yellow
+        Write-Host "  * The instance is not registered with SSM yet. Check with:" -ForegroundColor Yellow
+        Write-Host "      aws ssm describe-instance-information --region $region --profile $AwsProfile --query \"InstanceInformationList[].InstanceId\" --output text" -ForegroundColor Yellow
+        Write-Host "    If your instance never appears, its subnet has no route out - see infra/TESTING-AWS.md Step 5." -ForegroundColor Yellow
+        Write-Host "  * The Session Manager plugin is missing - re-run [1] elevated." -ForegroundColor Yellow
+        throw "SSM tunnel failed to start - see above."
     }
 
     Write-Host "Launching Remote Desktop against localhost:$LocalPort ..."

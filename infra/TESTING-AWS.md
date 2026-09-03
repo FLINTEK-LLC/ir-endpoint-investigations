@@ -295,6 +295,7 @@ common way to keep paying after a test.
 |---|---|
 | Apply fails on the AMI data source | Step 3 - the 2025 parameter is not in that region. |
 | `[4]` says the instance is not a managed node | No subnet egress (Step 5), or SSM has not registered yet - give it 5 minutes. |
+| `[4]` fails with SSM tunnel exit code 252 | AWS CLI exit 252 means invalid parameters. The console now prints the tunnel's own stderr, and keeps it at `%TEMP%\ssm-tunnel-<case>.err.log`. |
 | `VcpuLimitExceeded` | Step 4 - request a quota increase or use `t3.large`. |
 | Bootstrap log shows download failures | Subnet egress again. Check the route table points `0.0.0.0/0` at a NAT Gateway, not an IGW. |
 | `terraform destroy` fails on the bucket | Versioned bucket still holding objects - empty it first (Step 12). |
