@@ -173,9 +173,27 @@ if ($CloudProvider -eq 'AWS') {
         throw "Missing expected Terraform output (region) for case '$CaseId'. Check: terraform output region (in environmentsws-case, workspace $CaseId)."
     }
 
-    if (-not (Get-Command session-manager-plugin.exe -ErrorAction SilentlyContinue) -and
-        -not (Test-Path -LiteralPath "$env:ProgramFiles\Amazon\SessionManagerPlugin\bin\session-manager-plugin.exe")) {
-        throw "AWS Session Manager Plugin not found - run infra\scripts\Test-Prerequisites.ps1 (elevated) first."
+    # The AWS CLI locates the Session Manager plugin by searching PATH, and
+    # its installer only adds itself to the USER PATH in the registry - which
+    # does not reach a shell that was already open. So the file can be present
+    # (making a Test-Path check pass) while `aws ssm start-session` still
+    # fails with "SessionManagerPlugin is not found". That is exactly what
+    # happened: the guard here was satisfied and the CLI still could not see
+    # it.
+    #
+    # Finding the file and putting its directory on PATH for this process
+    # fixes it here, rather than telling the operator to go open a new shell.
+    $pluginDir = Join-Path $env:ProgramFiles 'Amazon\SessionManagerPlugin\bin'
+    $pluginExe = Join-Path $pluginDir 'session-manager-plugin.exe'
+    if (-not (Get-Command session-manager-plugin.exe -ErrorAction SilentlyContinue)) {
+        if (Test-Path -LiteralPath $pluginExe) {
+            if ($env:Path -notlike "*$pluginDir*") {
+                $env:Path = $env:Path.TrimEnd(';') + ";$pluginDir"
+                Write-Host 'Session Manager plugin was installed but not on PATH - added it for this session.' -ForegroundColor DarkGray
+            }
+        } else {
+            throw "AWS Session Manager Plugin not found at $pluginExe and not on PATH. Run infra\scripts\Test-Prerequisites.ps1 from an ELEVATED PowerShell."
+        }
     }
 
     Write-Host "Starting SSM port-forwarding tunnel: localhost:$LocalPort -> $instanceId`:3389 ..."

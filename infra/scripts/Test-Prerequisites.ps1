@@ -224,7 +224,25 @@ if (-not $ssmPluginCmd -and -not (Test-Path -LiteralPath $ssmPluginExe) -and -no
     }
 }
 if ($ssmPluginCmd -or (Test-Path -LiteralPath $ssmPluginExe)) {
-    Add-Result 'AWS Session Manager Plugin' 'OK' 'Installed'
+    # install.bat only writes the plugin's bin folder to the USER PATH in the
+    # registry, which does not reach shells that are already open - so the
+    # plugin can be installed and `aws ssm start-session` still reports
+    # "SessionManagerPlugin is not found". Promote it to the machine PATH
+    # when elevated, and put it on this process's PATH either way.
+    $ssmPluginDir = Join-Path $env:ProgramFiles 'Amazon\SessionManagerPlugin\bin'
+    if (Test-Path -LiteralPath $ssmPluginDir) {
+        if ($isElevated) {
+            try {
+                $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+                if ($machinePath -notlike "*$ssmPluginDir*") {
+                    [Environment]::SetEnvironmentVariable('Path', ($machinePath.TrimEnd(';') + ";$ssmPluginDir"), 'Machine')
+                }
+            } catch { }
+        }
+        if ($env:Path -notlike "*$ssmPluginDir*") { $env:Path = $env:Path.TrimEnd(';') + ";$ssmPluginDir" }
+    }
+    $onPath = [bool](Get-Command session-manager-plugin.exe -ErrorAction SilentlyContinue)
+    Add-Result 'AWS Session Manager Plugin' 'OK' "Installed$(if (-not $onPath) { ' - NOT on PATH; open a new shell' })"
 } elseif (-not $ssmPluginInstallAttempted) {
     $reason = if (-not $isElevated -and -not $SkipInstall) { 'not running elevated, so install was skipped' } else { 'not installed' }
     Add-Result 'AWS Session Manager Plugin' 'MISSING' "Not found and $reason. Download from https://s3.amazonaws.com/session-manager-downloads/plugin/latest/windows/SessionManagerPlugin.zip, extract, and run install.bat as Administrator, or re-run this script elevated."
