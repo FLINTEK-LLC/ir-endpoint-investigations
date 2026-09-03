@@ -88,7 +88,7 @@ if (-not (Get-Command aws -CommandType Application -ErrorAction SilentlyContinue
 if ($Delete) {
     Write-Host "Looking for a network tagged Project=ir-endpoint-investigations in $Region..."
     $vpcs = Invoke-Aws ec2 describe-vpcs --filters $tagFilter
-    if (-not $vpcs -or @($vpcs.Vpcs).Count -eq 0) {
+    if (-not $vpcs -or @($vpcs.Vpcs | Where-Object { $_ }).Count -eq 0) {
         Write-Host "Nothing to delete." -ForegroundColor Yellow
         return
     }
@@ -109,21 +109,21 @@ if ($Delete) {
         #    the one that silently keeps costing money if it is missed - an
         #    unassociated EIP is billed.
         $eips = Invoke-Aws ec2 describe-addresses --filters $tagFilter
-        foreach ($eip in @($eips.Addresses)) {
+        foreach ($eip in @($eips.Addresses | Where-Object { $_ })) {
             Write-Host "  releasing Elastic IP $($eip.PublicIp)"
             Invoke-Aws ec2 release-address --allocation-id $eip.AllocationId | Out-Null
         }
 
         # 3. Subnets (this also clears their route-table associations).
         $subnets = Invoke-Aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpcId"
-        foreach ($sn in @($subnets.Subnets)) {
+        foreach ($sn in @($subnets.Subnets | Where-Object { $_ })) {
             Write-Host "  deleting subnet $($sn.SubnetId)"
             Invoke-Aws ec2 delete-subnet --subnet-id $sn.SubnetId | Out-Null
         }
 
         # 4. Route tables, skipping the VPC's main one which cannot be deleted.
         $rts = Invoke-Aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpcId"
-        foreach ($rt in @($rts.RouteTables)) {
+        foreach ($rt in @($rts.RouteTables | Where-Object { $_ })) {
             if (@($rt.Associations | Where-Object { $_.Main }).Count -gt 0) { continue }
             Write-Host "  deleting route table $($rt.RouteTableId)"
             Invoke-Aws ec2 delete-route-table --route-table-id $rt.RouteTableId | Out-Null
@@ -131,7 +131,7 @@ if ($Delete) {
 
         # 5. Internet Gateway - detach before delete.
         $igws = Invoke-Aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpcId"
-        foreach ($igw in @($igws.InternetGateways)) {
+        foreach ($igw in @($igws.InternetGateways | Where-Object { $_ })) {
             Write-Host "  detaching and deleting $($igw.InternetGatewayId)"
             Invoke-Aws ec2 detach-internet-gateway --internet-gateway-id $igw.InternetGatewayId --vpc-id $vpcId | Out-Null
             Invoke-Aws ec2 delete-internet-gateway --internet-gateway-id $igw.InternetGatewayId | Out-Null

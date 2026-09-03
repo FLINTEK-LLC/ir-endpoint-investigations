@@ -70,8 +70,14 @@ function Invoke-Aws {
 # --- Show what is about to be destroyed, before asking ---
 Write-Host "Inspecting s3://$BucketName ..." -ForegroundColor Cyan
 $versions = Invoke-Aws s3api list-object-versions --bucket $BucketName
-$objVersions = @($versions.Versions)
-$markers = @($versions.DeleteMarkers)
+# Where-Object { $_ } is load-bearing, not tidiness. An empty bucket makes
+# list-object-versions return {}, so .Versions is $null - and @($null) is a
+# ONE-element array containing null, not an empty one. Without the filter the
+# emptiness check below saw a count of 1, entered the delete loop, and called
+# delete-object with --key '' --version-id '' (confirmed directly). Same
+# family as PowerShell's other array-vs-scalar traps.
+$objVersions = @($versions.Versions | Where-Object { $_ })
+$markers = @($versions.DeleteMarkers | Where-Object { $_ })
 $totalBytes = ($objVersions | Measure-Object -Property Size -Sum).Sum
 if (-not $totalBytes) { $totalBytes = 0 }
 
@@ -108,6 +114,7 @@ if ($objVersions.Count -eq 0 -and $markers.Count -eq 0) {
     $failed = 0
     $done = 0
     foreach ($item in @($objVersions + $markers)) {
+        if (-not $item -or -not $item.Key) { continue }
         try {
             Invoke-Aws s3api delete-object --bucket $BucketName --key $item.Key --version-id $item.VersionId | Out-Null
             $done++

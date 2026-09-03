@@ -73,16 +73,22 @@ $leftover = @()
 foreach ($reg in $regions) {
     # --- EC2 instances (anything not terminated) ---
     $inst = Invoke-Aws -TargetRegion $reg ec2 describe-instances
-    foreach ($res in @($inst.Reservations)) {
+    foreach ($res in @($inst.Reservations | Where-Object { $_ })) {
         foreach ($i in @($res.Instances | Where-Object { $_.State.Name -ne 'terminated' })) {
             $name = ($i.Tags | Where-Object { $_.Key -eq 'Name' } | Select-Object -First 1).Value
             $billing += [pscustomobject]@{ Region = $reg; Kind = 'EC2 instance'; Id = $i.InstanceId; Detail = "$($i.InstanceType) $($i.State.Name) $name" }
         }
     }
 
+    # Every enumeration below filters nulls. An AWS API that returns no
+    # results may omit the key entirely rather than send an empty array, and
+    # @($null) is a ONE-element array containing null - so an unfiltered
+    # foreach iterates once with $item = $null and reports a phantom resource
+    # with a blank id. That is exactly the kind of false positive this script
+    # exists to eliminate.
     # --- EBS volumes (billed attached OR detached) ---
     $vols = Invoke-Aws -TargetRegion $reg ec2 describe-volumes
-    foreach ($v in @($vols.Volumes)) {
+    foreach ($v in @($vols.Volumes | Where-Object { $_ })) {
         $billing += [pscustomobject]@{ Region = $reg; Kind = 'EBS volume'; Id = $v.VolumeId; Detail = "$($v.Size)GiB $($v.VolumeType) $($v.State)" }
     }
 
@@ -94,14 +100,14 @@ foreach ($reg in $regions) {
 
     # --- Elastic IPs (billed when NOT associated) ---
     $eips = Invoke-Aws -TargetRegion $reg ec2 describe-addresses
-    foreach ($e in @($eips.Addresses)) {
+    foreach ($e in @($eips.Addresses | Where-Object { $_ })) {
         $assoc = if ($e.InstanceId -or $e.NetworkInterfaceId) { 'associated' } else { 'UNASSOCIATED - billed' }
         $billing += [pscustomobject]@{ Region = $reg; Kind = 'Elastic IP'; Id = $e.PublicIp; Detail = $assoc }
     }
 
     # --- Snapshots we own ---
     $snaps = Invoke-Aws -TargetRegion $reg ec2 describe-snapshots --owner-ids self
-    foreach ($sn in @($snaps.Snapshots)) {
+    foreach ($sn in @($snaps.Snapshots | Where-Object { $_ })) {
         $billing += [pscustomobject]@{ Region = $reg; Kind = 'EBS snapshot'; Id = $sn.SnapshotId; Detail = "$($sn.VolumeSize)GiB" }
     }
 
@@ -114,7 +120,7 @@ foreach ($reg in $regions) {
 
 # --- S3 is global; storage bills by what is in it ---
 $buckets = Invoke-Aws -TargetRegion $Region s3api list-buckets
-foreach ($b in @($buckets.Buckets)) {
+foreach ($b in @($buckets.Buckets | Where-Object { $_ })) {
     if ($b.Name -notmatch '^(ir-case|ir-tools)') { continue }
     $billing += [pscustomobject]@{ Region = 's3 (global)'; Kind = 'S3 bucket'; Id = $b.Name; Detail = 'check contents - storage is billed' }
 }
