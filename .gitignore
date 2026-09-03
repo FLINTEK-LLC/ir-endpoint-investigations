@@ -46,3 +46,8 @@ crash.*.log
 # see infra/README.md's "Accounts, tokens, and secrets" section. Never
 # contains credential material, but is still local-only, not shared state.
 infra/.cases/
+
+# Which shared network / tools storage this machine created, so the console
+# can offer them as defaults. Same rule as above: bookkeeping, never secrets,
+# but specific to one operator's cloud accounts and not shared state.
+infra/.prereqs.json

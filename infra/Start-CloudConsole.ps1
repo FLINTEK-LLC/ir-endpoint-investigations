@@ -61,6 +61,11 @@ $ErrorActionPreference = 'Stop'
 $script:InfraRoot = $PSScriptRoot
 $script:ScriptsDir = Join-Path $InfraRoot 'scripts'
 $script:CasesDir = Join-Path $InfraRoot '.cases'
+# Shared prerequisite infrastructure (network, tools storage) that every case
+# reuses. Deliberately NOT inside .cases\ - Get-AllCaseRecords globs *.json
+# there, so a file living in that folder would be enumerated as a phantom case
+# with a blank id.
+$script:PrereqPath = Join-Path $InfraRoot '.prereqs.json'
 $script:AwsEnvDir = Join-Path $InfraRoot 'environments\aws-case'
 $script:AzureEnvDir = Join-Path $InfraRoot 'environments\azure-case'
 # Shared, per-VNet Azure Bastion - deployed ONCE, not per case, and kept in
@@ -223,7 +228,7 @@ function Get-AllCaseRecords {
     if (Test-Path -LiteralPath $script:CasesDir) {
         $items = @(Get-ChildItem -LiteralPath $script:CasesDir -Filter '*.json' | ForEach-Object {
             Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json
-        })
+        } | Where-Object { $_ -and $_.case_id })
     }
     Write-Output -NoEnumerate $items
 }
@@ -707,8 +712,14 @@ function Invoke-CreateCase {
 
     if ($cloud -eq 'AWS') {
         $envDir = $script:AwsEnvDir
-        $vars['region'] = Read-Choice -Prompt "AWS region:" -Items $script:AwsRegions -Default 'us-east-1' -AllowCustom -CustomPrompt 'AWS region'
-        $vars['aws_profile'] = Read-Default -Prompt "AWS CLI profile" -Default 'ir-cloud'
+        # Defaults come from whatever [8]/[9] recorded, so the common path is
+        # "press Enter four times" rather than re-entering ids that were
+        # printed to the screen twenty minutes ago. $prereq is empty on a
+        # first run, and every lookup below falls back to the same literal
+        # that used to be hardcoded here.
+        $prereq = Get-Prereqs -Cloud 'AWS'
+        $vars['region'] = Read-Choice -Prompt "AWS region:" -Items $script:AwsRegions -Default $(if ($prereq['region']) { $prereq['region'] } else { 'us-east-1' }) -AllowCustom -CustomPrompt 'AWS region'
+        $vars['aws_profile'] = Read-Default -Prompt "AWS CLI profile" -Default $(if ($prereq['aws_profile']) { $prereq['aws_profile'] } else { 'ir-cloud' })
         Write-Host "The subnet below needs its own outbound internet route (a NAT Gateway) - the investigation host has no public IP by design. Most existing/default VPCs already have this; see infra/README.md if you need to add one." -ForegroundColor Cyan
         # List real VPCs/subnets rather than asking for pasted IDs, and mark
         # which subnets actually have egress - the host has no public IP, so a
@@ -746,9 +757,9 @@ function Invoke-CreateCase {
                     Value = $_.SubnetId
                 }
             }
-            $vars['subnet_id'] = Read-Choice -Prompt "Subnet for the investigation host:" -Items $subnetItems -DisplayProperty Label -ValueProperty Value -AllowCustom -CustomPrompt 'Subnet ID'
+            $vars['subnet_id'] = Read-Choice -Prompt "Subnet for the investigation host:" -Items $subnetItems -DisplayProperty Label -ValueProperty Value -Default $prereq['subnet_id'] -AllowCustom -CustomPrompt 'Subnet ID'
         } else {
-            $subnetId = Read-Required -Prompt "Subnet ID (must have NAT/internet egress)"
+            $subnetId = Read-Default -Prompt "Subnet ID (must have NAT/internet egress)" -Default $prereq['subnet_id']
             if (-not $subnetId) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
             $vars['subnet_id'] = $subnetId
         }
@@ -764,14 +775,24 @@ function Invoke-CreateCase {
         Write-Host "OPTIONAL: an S3 bucket holding your licensed KAPE (kape.zip). Without it the" -ForegroundColor Cyan
         Write-Host "host comes up with no KAPE and no parsing toolchain. Must NOT be this case's" -ForegroundColor Cyan
         Write-Host "evidence bucket - see infra/README.md's \"Getting KAPE onto the host\"." -ForegroundColor Cyan
-        $toolsBucket = Read-Default -Prompt "Tools S3 bucket name (blank = skip)" -Default ''
+        if ($prereq['tools_bucket_name']) {
+            Write-Host "Using the bucket recorded by [9] Tools storage - press Enter to accept." -ForegroundColor DarkGray
+        }
+        $toolsBucket = Read-Default -Prompt "Tools S3 bucket name (blank = skip)" -Default $prereq['tools_bucket_name']
         if ($toolsBucket) { $vars['tools_bucket_name'] = $toolsBucket }
     } else {
         $envDir = $script:AzureEnvDir
-        $vars['location'] = Read-Choice -Prompt "Azure region:" -Items $script:AzureRegions -Default 'eastus' -AllowCustom -CustomPrompt 'Azure region'
+        # As on the AWS branch: defaults come from what [8]/[9] recorded.
+        $prereq = Get-Prereqs -Cloud 'Azure'
+        $vars['location'] = Read-Choice -Prompt "Azure region:" -Items $script:AzureRegions -Default $(if ($prereq['location']) { $prereq['location'] } else { 'eastus' }) -AllowCustom -CustomPrompt 'Azure region'
         Write-Host "The subnet below needs its own outbound internet route - the investigation host has no public IP by design. Most existing VNets already have this." -ForegroundColor Cyan
         Write-Host "Do NOT use the AzureBastionSubnet here - that subnet is reserved for Bastion and cannot hold other resources." -ForegroundColor Cyan
-        $subnetId = Read-Required -Prompt "Subnet resource ID for the investigation host"
+        if ($prereq['subnet_id']) {
+            Write-Host "Using the subnet recorded by [8] Case networking - press Enter to accept." -ForegroundColor DarkGray
+        } else {
+            Write-Host "No subnet recorded yet - [8] Case networking creates one and remembers it." -ForegroundColor DarkGray
+        }
+        $subnetId = Read-Default -Prompt "Subnet resource ID for the investigation host" -Default $prereq['subnet_id']
         if (-not $subnetId) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
         $vars['subnet_id'] = $subnetId
 
@@ -808,10 +829,13 @@ function Invoke-CreateCase {
         Write-Host "Without it the host comes up with no KAPE and no parsing toolchain - fine for" -ForegroundColor Cyan
         Write-Host "an infrastructure test. Must NOT be this case's evidence account. See" -ForegroundColor Cyan
         Write-Host "infra/README.md's "Getting KAPE onto the host" for the one-time setup." -ForegroundColor Cyan
-        $toolsId = Read-Default -Prompt "Tools storage account resource ID (blank = skip)" -Default ''
+        if ($prereq['tools_storage_account_id']) {
+            Write-Host "Using the storage account recorded by [9] Tools storage - press Enter to accept." -ForegroundColor DarkGray
+        }
+        $toolsId = Read-Default -Prompt "Tools storage account resource ID (blank = skip)" -Default $prereq['tools_storage_account_id']
         if ($toolsId) {
             $vars['tools_storage_account_id'] = $toolsId
-            $vars['tools_container_name'] = Read-Default -Prompt "Tools container name" -Default 'irtools'
+            $vars['tools_container_name'] = Read-Default -Prompt "Tools container name" -Default $(if ($prereq['tools_container_name']) { $prereq['tools_container_name'] } else { 'irtools' })
         }
 
         # Offer only sizes this subscription can actually deploy in this region.
@@ -1189,6 +1213,382 @@ function Show-CaseList {
     } | Format-Table -AutoSize
 }
 
+
+# ---------------------------------------------------------------------------
+# Shared prerequisite infrastructure (.prereqs.json)
+#
+# Networking and tools storage are created once per cloud account and reused by
+# every case, so they sit outside the per-case Terraform. Remembering what was
+# created means [2] can offer it as a default instead of asking the operator to
+# keep a subnet resource id on a sticky note - which is where copy/paste errors
+# come from. Same bookkeeping-not-secrets rule as .cases\: nothing here is
+# credential material.
+# ---------------------------------------------------------------------------
+
+function Get-Prereqs {
+    param([string]$Cloud)
+    if (-not (Test-Path -LiteralPath $script:PrereqPath)) { return @{} }
+    try {
+        $all = Get-Content -Raw -LiteralPath $script:PrereqPath | ConvertFrom-Json
+    } catch {
+        Write-Host "Could not read $($script:PrereqPath) - ignoring saved defaults." -ForegroundColor Yellow
+        return @{}
+    }
+    if (-not $Cloud) { return (ConvertTo-Hashtable $all) }
+    if (-not $all.PSObject.Properties[$Cloud]) { return @{} }
+    return (ConvertTo-Hashtable $all.$Cloud)
+}
+
+function Save-Prereq {
+    param([string]$Cloud, [hashtable]$Values)
+    $all = Get-Prereqs
+    if (-not $all.ContainsKey($Cloud)) { $all[$Cloud] = @{} }
+    $section = ConvertTo-Hashtable $all[$Cloud]
+    foreach ($k in $Values.Keys) { $section[$k] = $Values[$k] }
+    $all[$Cloud] = $section
+    ($all | ConvertTo-Json -Depth 10) | Out-File -Encoding utf8 -LiteralPath $script:PrereqPath
+}
+
+function Show-Prereqs {
+    $all = Get-Prereqs
+    if ($all.Count -eq 0) {
+        Write-Host "No shared infrastructure has been created from this machine yet." -ForegroundColor Yellow
+        Write-Host "Options [8] and [9] create it; [2] then offers it as a default." -ForegroundColor Yellow
+        return
+    }
+    foreach ($cloud in $all.Keys) {
+        Write-Host ""
+        Write-Host "$cloud" -ForegroundColor Cyan
+        $section = ConvertTo-Hashtable $all[$cloud]
+        foreach ($k in ($section.Keys | Sort-Object)) {
+            Write-Host ("  {0,-28} {1}" -f $k, $section[$k])
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# [8] Case networking
+# ---------------------------------------------------------------------------
+
+function Invoke-NetworkMenu {
+    $cloud = Read-CloudChoice
+    if (-not $cloud) { return }
+    $saved = Get-Prereqs -Cloud $cloud
+
+    Write-Host ""
+    if ($saved['subnet_id']) {
+        Write-Host "Currently recorded subnet for $($cloud): $($saved['subnet_id'])" -ForegroundColor DarkGray
+    }
+    $action = Read-Choice -Prompt "Case networking ($cloud):" -Items @(
+        [pscustomobject]@{ Label = 'Create it - one VNet/VPC and subnet, reused by every case'; Value = 'create' }
+        [pscustomobject]@{ Label = 'Delete it - only when no case is still using it'; Value = 'delete' }
+    ) -DisplayProperty Label -ValueProperty Value
+
+    if ($cloud -eq 'AWS') {
+        $region = Read-Choice -Prompt "AWS region:" -Items $script:AwsRegions -Default $(if ($saved['region']) { $saved['region'] } else { 'us-east-1' }) -AllowCustom -CustomPrompt 'AWS region'
+        $awsProfile = Read-Default -Prompt "AWS CLI profile" -Default ($(if ($saved['aws_profile']) { $saved['aws_profile'] } else { 'ir-cloud' }))
+
+        if ($action -eq 'delete') {
+            Write-Host ""
+            Write-Host "This deletes the VPC, its subnets, the NAT Gateway and its Elastic IP in $region." -ForegroundColor Red
+            Write-Host "Any case whose host still lives in that subnet will lose its network." -ForegroundColor Red
+            if (-not (Read-YesNo -Prompt "Continue?" -Default $false)) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
+            Invoke-ScriptFile 'New-AwsTestNetwork.ps1' @('-Delete', '-Region', $region, '-AwsProfile', $awsProfile)
+            return
+        }
+
+        Write-Host ""
+        Write-Host "This creates a VPC, a public and a private subnet, and a NAT Gateway." -ForegroundColor Cyan
+        Write-Host "The NAT Gateway is what gives the investigation host outbound internet -" -ForegroundColor Cyan
+        Write-Host "it has no public IP by design, so without one it never reaches SSM or the" -ForegroundColor Cyan
+        Write-Host "bootstrap script. It bills about `$0.045/hr from creation, so [8] Delete it" -ForegroundColor Cyan
+        Write-Host "when you are done testing." -ForegroundColor Cyan
+        if (-not (Read-YesNo -Prompt "Create it now?" -Default $true)) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
+        Invoke-ScriptFile 'New-AwsTestNetwork.ps1' @('-Region', $region, '-AwsProfile', $awsProfile)
+
+        # The script prints the ids; capturing its stdout would mean giving up
+        # the live progress output, so this asks the operator to confirm the
+        # private subnet id instead. Saved once here, offered as the default
+        # for every case afterwards.
+        Write-Host ""
+        Write-Host "Copy the PRIVATE subnet id printed above so [2] can offer it as a default." -ForegroundColor Cyan
+        $subnetId = Read-Default -Prompt "Private subnet ID (blank = don't remember)" -Default ''
+        $vpcId = Read-Default -Prompt "VPC ID (blank = don't remember)" -Default ''
+        $toSave = @{ region = $region; aws_profile = $awsProfile }
+        if ($subnetId) { $toSave['subnet_id'] = $subnetId }
+        if ($vpcId) { $toSave['vpc_id'] = $vpcId }
+        Save-Prereq -Cloud 'AWS' -Values $toSave
+        Write-Host "Remembered for next time." -ForegroundColor Green
+        return
+    }
+
+    # --- Azure ---
+    $rg = Read-Default -Prompt "Resource group for the network" -Default ($(if ($saved['network_resource_group']) { $saved['network_resource_group'] } else { 'rg-ir-network' }))
+
+    if ($action -eq 'delete') {
+        Write-Host ""
+        Write-Host "This deletes resource group '$rg' and everything in it." -ForegroundColor Red
+        Write-Host "Any case whose host still lives in that VNet will lose its network." -ForegroundColor Red
+        if (-not (Read-YesNo -Prompt "Continue?" -Default $false)) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
+        Invoke-ScriptFile 'New-AzureTestNetwork.ps1' @('-Delete', '-ResourceGroup', $rg)
+        return
+    }
+
+    $location = Read-Choice -Prompt "Azure region:" -Items $script:AzureRegions -Default ($(if ($saved['location']) { $saved['location'] } else { 'eastus' })) -AllowCustom -CustomPrompt 'Azure region'
+    Write-Host ""
+    Write-Host "This creates a VNet and subnet the investigation hosts launch into." -ForegroundColor Cyan
+    Write-Host "A VNet costs nothing while idle - only the VMs inside it bill." -ForegroundColor Cyan
+    if (-not (Read-YesNo -Prompt "Create it now?" -Default $true)) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
+    Invoke-ScriptFile 'New-AzureTestNetwork.ps1' @('-ResourceGroup', $rg, '-Location', $location)
+
+    Write-Host ""
+    Write-Host "Copy the Subnet ID printed above so [2] can offer it as a default." -ForegroundColor Cyan
+    $subnetId = Read-Default -Prompt "Subnet resource ID (blank = don't remember)" -Default ''
+    $toSave = @{ location = $location; network_resource_group = $rg }
+    if ($subnetId) { $toSave['subnet_id'] = $subnetId }
+    Save-Prereq -Cloud 'Azure' -Values $toSave
+    Write-Host "Remembered for next time." -ForegroundColor Green
+}
+
+# ---------------------------------------------------------------------------
+# [9] Tools storage (licensed KAPE)
+# ---------------------------------------------------------------------------
+
+function Invoke-ToolsStorageMenu {
+    $cloud = Read-CloudChoice
+    if (-not $cloud) { return }
+    $saved = Get-Prereqs -Cloud $cloud
+
+    Write-Host ""
+    Write-Host "Investigation hosts pull licensed tooling (KAPE) from a private bucket or" -ForegroundColor Cyan
+    Write-Host "storage account in your own account, read-only, using the identity they" -ForegroundColor Cyan
+    Write-Host "already have. Created once and reused by every case." -ForegroundColor Cyan
+    if ($cloud -eq 'AWS' -and $saved['tools_bucket_name']) {
+        Write-Host "Currently recorded: $($saved['tools_bucket_name'])" -ForegroundColor DarkGray
+    } elseif ($cloud -eq 'Azure' -and $saved['tools_storage_account_id']) {
+        Write-Host "Currently recorded: $($saved['tools_storage_account_id'])" -ForegroundColor DarkGray
+    }
+
+    $action = Read-Choice -Prompt "Tools storage ($cloud):" -Items @(
+        [pscustomobject]@{ Label = 'Create it (optionally uploading a kape.zip now)'; Value = 'create' }
+        [pscustomobject]@{ Label = 'Upload/replace kape.zip in storage that already exists'; Value = 'upload' }
+        [pscustomobject]@{ Label = 'Delete it'; Value = 'delete' }
+    ) -DisplayProperty Label -ValueProperty Value
+
+    $scriptArgs = @('-CloudProvider', $cloud)
+
+    if ($cloud -eq 'AWS') {
+        $region = $(if ($saved['region']) { $saved['region'] } else { 'us-east-1' })
+        $awsProfile = $(if ($saved['aws_profile']) { $saved['aws_profile'] } else { 'ir-cloud' })
+        $scriptArgs += @('-Region', $region, '-AwsProfile', $awsProfile)
+    } else {
+        $rg = Read-Default -Prompt "Resource group for tools storage" -Default ($(if ($saved['tools_resource_group']) { $saved['tools_resource_group'] } else { 'rg-ir-tools' }))
+        $location = $(if ($saved['location']) { $saved['location'] } else { 'eastus' })
+        $scriptArgs += @('-ResourceGroup', $rg, '-Location', $location)
+    }
+
+    if ($action -eq 'delete') {
+        Write-Host ""
+        Write-Host "This deletes the tools storage. Your KAPE zip goes with it - you would have" -ForegroundColor Red
+        Write-Host "to re-upload it before the next case can install KAPE." -ForegroundColor Red
+        if (-not (Read-YesNo -Prompt "Continue?" -Default $false)) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
+        if ($cloud -eq 'AWS') {
+            $name = Read-Default -Prompt "Tools bucket name" -Default ($saved['tools_bucket_name'])
+            if (-not $name) { Write-Host "Cancelled - no bucket name." -ForegroundColor Yellow; return }
+            $scriptArgs += @('-Name', $name)
+        }
+        Invoke-ScriptFile 'New-ToolsStorage.ps1' ($scriptArgs + @('-Delete'))
+        return
+    }
+
+    # A kape.zip is optional at create time but is the entire point of the
+    # upload action, so it is required there.
+    $kapeZip = Read-Default -Prompt "Path to your licensed kape.zip (blank = skip the upload)" -Default ''
+    if ($action -eq 'upload' -and -not $kapeZip) {
+        Write-Host "Nothing to upload - cancelled." -ForegroundColor Yellow
+        return
+    }
+    if ($kapeZip -and -not (Test-Path -LiteralPath $kapeZip)) {
+        Write-Host "No file at: $kapeZip" -ForegroundColor Red
+        return
+    }
+    if ($kapeZip) { $scriptArgs += @('-KapeZipPath', $kapeZip) }
+
+    if ($action -eq 'upload') {
+        # Reuse the existing storage rather than making a second one.
+        if ($cloud -eq 'AWS') {
+            $name = Read-Default -Prompt "Existing tools bucket name" -Default ($saved['tools_bucket_name'])
+            if (-not $name) { Write-Host "Cancelled - no bucket name." -ForegroundColor Yellow; return }
+            Write-Host ""
+            Write-Host "Uploading to s3://$name/kape.zip ..." -ForegroundColor Cyan
+            & aws s3 cp $kapeZip "s3://$name/kape.zip" --profile $(if ($saved['aws_profile']) { $saved['aws_profile'] } else { 'ir-cloud' }) | Out-Host
+            if ($LASTEXITCODE -eq 0) { Write-Host "Uploaded." -ForegroundColor Green } else { Write-Host "Upload failed - see output above." -ForegroundColor Red }
+        } else {
+            $account = Read-Default -Prompt "Existing tools storage account NAME (not the resource id)" -Default ''
+            if (-not $account) { Write-Host "Cancelled - no account name." -ForegroundColor Yellow; return }
+            $container = Read-Default -Prompt "Container name" -Default ($(if ($saved['tools_container_name']) { $saved['tools_container_name'] } else { 'irtools' }))
+            Write-Host ""
+            Write-Host "Uploading to $account/$container/kape.zip ..." -ForegroundColor Cyan
+            & az storage blob upload --account-name $account --container-name $container --name kape.zip --file $kapeZip --auth-mode login --overwrite | Out-Null
+            if ($LASTEXITCODE -eq 0) { Write-Host "Uploaded." -ForegroundColor Green } else { Write-Host "Upload failed - see output above." -ForegroundColor Red }
+        }
+        return
+    }
+
+    Invoke-ScriptFile 'New-ToolsStorage.ps1' $scriptArgs
+
+    Write-Host ""
+    Write-Host "Copy the identifier printed above so [2] can offer it as a default." -ForegroundColor Cyan
+    if ($cloud -eq 'AWS') {
+        $name = Read-Default -Prompt "Tools bucket name (blank = don't remember)" -Default ''
+        if ($name) { Save-Prereq -Cloud 'AWS' -Values @{ tools_bucket_name = $name }; Write-Host "Remembered for next time." -ForegroundColor Green }
+    } else {
+        $id = Read-Default -Prompt "Tools storage account resource ID (blank = don't remember)" -Default ''
+        if ($id) {
+            $container = Read-Default -Prompt "Tools container name" -Default 'irtools'
+            Save-Prereq -Cloud 'Azure' -Values @{ tools_storage_account_id = $id; tools_container_name = $container; tools_resource_group = $rg }
+            Write-Host "Remembered for next time." -ForegroundColor Green
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# [B] Azure shared Bastion - the existing deploy/destroy pair, behind one entry
+# ---------------------------------------------------------------------------
+
+function Invoke-BastionMenu {
+    Write-Host ""
+    Write-Host "A Bastion is shared per-VNet, not per case, and bills by the hour from the" -ForegroundColor Cyan
+    Write-Host "moment it exists - roughly `$0.29/hr for the Standard SKU needed for a real" -ForegroundColor Cyan
+    Write-Host "mstsc session. It is the most expensive thing this project can leave running." -ForegroundColor Cyan
+    $action = Read-Choice -Prompt "Azure shared Bastion:" -Items @(
+        [pscustomobject]@{ Label = 'Deploy or update it'; Value = 'deploy' }
+        [pscustomobject]@{ Label = 'Destroy it (stops the hourly billing)'; Value = 'destroy' }
+    ) -DisplayProperty Label -ValueProperty Value
+    if ($action -eq 'deploy') { Invoke-DeploySharedBastion } else { Invoke-DestroySharedBastion }
+}
+
+# ---------------------------------------------------------------------------
+# [C] What is still billing
+# ---------------------------------------------------------------------------
+
+function Invoke-CostCheck {
+    $cloud = Read-Choice -Prompt "Check which cloud?" -Items @(
+        [pscustomobject]@{ Label = 'Both'; Value = 'Both' }
+        [pscustomobject]@{ Label = 'AWS only'; Value = 'AWS' }
+        [pscustomobject]@{ Label = 'Azure only'; Value = 'Azure' }
+    ) -DisplayProperty Label -ValueProperty Value -Default 'Both'
+
+    $wide = Read-YesNo -Prompt "Sweep every region/subscription (slower, but the only way to catch something you have forgotten about)?" -Default $true
+
+    if ($cloud -in @('Both', 'AWS')) {
+        Write-Host ""
+        Write-Host "=== AWS ===" -ForegroundColor Cyan
+        $saved = Get-Prereqs -Cloud 'AWS'
+        $awsArgs = @(
+            '-AwsProfile', $(if ($saved['aws_profile']) { $saved['aws_profile'] } else { 'ir-cloud' })
+            '-Region', $(if ($saved['region']) { $saved['region'] } else { 'us-east-1' })
+        )
+        if ($wide) { $awsArgs += '-AllRegions' }
+        Invoke-ScriptFile 'Test-AwsTeardown.ps1' $awsArgs
+    }
+
+    if ($cloud -in @('Both', 'Azure')) {
+        Write-Host ""
+        Write-Host "=== Azure ===" -ForegroundColor Cyan
+        $azArgs = @()
+        if ($wide) { $azArgs += '-AllSubscriptions' }
+        Invoke-ScriptFile 'Test-AzureTeardown.ps1' $azArgs
+    }
+}
+
+# ---------------------------------------------------------------------------
+# [D] Delete a case completely
+# ---------------------------------------------------------------------------
+
+function Invoke-DeleteCaseCompletely {
+    $sel = Select-ExistingCase -Prompt "Case ID to delete completely"
+    if (-not $sel) { return }
+    $caseId = $sel.CaseId
+    $record = $sel.Record
+    if (-not $record) {
+        Write-Host "No local record for '$caseId' - cannot reconstruct the variables terraform needs to destroy it. Run this from the machine that created the case." -ForegroundColor Red
+        return
+    }
+
+    $storage = if ($record.cloud -eq 'AWS') { "s3://$($record.outputs.bucket_name)" } else { "$($record.outputs.storage_account_name)/$($record.outputs.container_name)" }
+
+    Write-Host ""
+    Write-Host "This destroys EVERYTHING for case '$caseId':" -ForegroundColor Red
+    Write-Host "  - the investigation host and its disks" -ForegroundColor Red
+    Write-Host "  - the evidence storage and every collection in it: $storage" -ForegroundColor Red
+    Write-Host "  - its terraform workspace and local case record" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "The evidence is not recoverable afterwards. If this case might still be" -ForegroundColor Yellow
+    Write-Host "needed, use [6] Archive instead - that keeps the evidence and only stops" -ForegroundColor Yellow
+    Write-Host "the compute billing." -ForegroundColor Yellow
+    Write-Host ""
+    $typed = Read-Host "Type the case ID to confirm"
+    if ($typed -ne $caseId) {
+        Write-Host "Case ID did not match - nothing was deleted." -ForegroundColor Yellow
+        return
+    }
+
+    $envDir = if ($record.cloud -eq 'AWS') { $script:AwsEnvDir } else { $script:AzureEnvDir }
+
+    if ($record.cloud -eq 'AWS') {
+        # The S3 bucket is Terraform-managed but the module sets no
+        # force_destroy - deliberately, so a stray `terraform destroy` can
+        # never take evidence with it. That means terraform cannot delete a
+        # bucket with anything in it. Emptying it first (and letting terraform
+        # delete the empty bucket) keeps state consistent; deleting the bucket
+        # out from under terraform would leave a resource in state that no
+        # longer exists.
+        $bucket = $record.outputs.bucket_name
+        if ($bucket) {
+            Write-Host ""
+            Write-Host "Emptying s3://$bucket so terraform can remove it..." -ForegroundColor Cyan
+            Invoke-ScriptFile 'Remove-AwsCaseStorage.ps1' @(
+                '-BucketName', $bucket, '-EmptyOnly', '-Force',
+                '-AwsProfile', $record.vars.aws_profile, '-Region', $record.vars.region
+            )
+        }
+    }
+
+    Write-Host ""
+    Write-Host "Destroying all remaining resources for '$caseId'..." -ForegroundColor Cyan
+    $varArgs = ConvertTo-TerraformVarArgs -Vars (ConvertTo-Hashtable $record.vars)
+    $ok = Invoke-CaseTerraform -EnvDir $envDir -CaseId $caseId -TerraformArgs (@('destroy', '-auto-approve') + $varArgs)
+    if (-not $ok) {
+        Write-Host ""
+        Write-Host "terraform destroy failed - see output above. Nothing was removed locally, so" -ForegroundColor Red
+        Write-Host "you can fix the cause and re-run this option." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "If it failed on immutable storage, that is the retention policy working as" -ForegroundColor Yellow
+        Write-Host "intended - evidence under a COMPLIANCE lock cannot be deleted early by" -ForegroundColor Yellow
+        Write-Host "anyone, including you. Wait for the retention to expire." -ForegroundColor Yellow
+        return
+    }
+
+    # Only now clean up the local bookkeeping - if destroy failed above, the
+    # record is what makes a retry possible.
+    $tf = Get-TerraformExe
+    if ($tf) {
+        Push-Location $envDir
+        try {
+            & $tf workspace select default | Out-Null
+            & $tf workspace delete $caseId | Out-Null
+        } finally { Pop-Location }
+    }
+
+    $recordPath = Get-CaseRecordPath -CaseId $caseId
+    if (Test-Path -LiteralPath $recordPath) { Remove-Item -LiteralPath $recordPath -Force }
+
+    Write-Host ""
+    Write-Host "Case '$caseId' is completely gone." -ForegroundColor Green
+    Write-Host "Confirm nothing is still billing with [C]." -ForegroundColor DarkGray
+}
+
 # ---------------------------------------------------------------------------
 # Menu
 # ---------------------------------------------------------------------------
@@ -1198,19 +1598,26 @@ function Show-Menu {
     Write-Host "=================================================="
     Write-Host " ir-endpoint-investigations - Cloud Console"
     Write-Host "=================================================="
-    Write-Host " [1] First-time setup (Terraform/AWS CLI/Azure CLI + auth check)"
-    Write-Host " [2] Create a new case"
-    Write-Host " [3] Build this case's offline collector"
-    Write-Host " [4] Connect to the investigation host"
-    Write-Host " [5] Destroy the investigation host (evidence storage kept)"
-    Write-Host " [6] Archive this case (force cold storage now, optional immutability lock)"
-    Write-Host " [7] List cases"
-    Write-Host " [L] Lock down a case's RDP now (remove its just-in-time rule)"
+    Write-Host " Case workflow"
+    Write-Host "  [1] First-time setup (Terraform/AWS CLI/Azure CLI + auth check)"
+    Write-Host "  [2] Create a new case"
+    Write-Host "  [3] Build this case's offline collector"
+    Write-Host "  [4] Connect to the investigation host"
+    Write-Host "  [5] Destroy the investigation host (evidence storage kept)"
+    Write-Host "  [6] Archive this case (force cold storage now, optional immutability lock)"
+    Write-Host "  [7] List cases"
     Write-Host ""
-    Write-Host " Azure shared Bastion (one per VNet, bills hourly - see infra/README.md):"
-    Write-Host " [8] Deploy/update the shared Azure Bastion"
-    Write-Host " [9] Destroy the shared Azure Bastion (stops its hourly billing)"
-    Write-Host " [Q] Quit"
+    Write-Host " Shared infrastructure (create once per cloud account, reused by every case)"
+    Write-Host "  [8] Case networking (VNet/VPC + subnet)"
+    Write-Host "  [9] Tools storage (your licensed KAPE)"
+    Write-Host "  [B] Azure shared Bastion (bills hourly - deploy/destroy)"
+    Write-Host "  [P] Show what shared infrastructure is recorded"
+    Write-Host ""
+    Write-Host " Teardown and cost"
+    Write-Host "  [C] Check what is still billing (AWS/Azure)"
+    Write-Host "  [D] Delete a case completely (host AND evidence - irreversible)"
+    Write-Host "  [L] Lock down a case's RDP now (remove its just-in-time rule)"
+    Write-Host "  [Q] Quit"
     Write-Host ""
 }
 
@@ -1226,9 +1633,13 @@ while ($true) {
         '5' { Invoke-DestroyHostMenu; Wait-ForEnter }
         '6' { Invoke-ArchiveCase; Wait-ForEnter }
         '7' { Show-CaseList; Wait-ForEnter }
+        '8' { Invoke-NetworkMenu; Wait-ForEnter }
+        '9' { Invoke-ToolsStorageMenu; Wait-ForEnter }
+        'B' { Invoke-BastionMenu; Wait-ForEnter }
+        'P' { Show-Prereqs; Wait-ForEnter }
+        'C' { Invoke-CostCheck; Wait-ForEnter }
+        'D' { Invoke-DeleteCaseCompletely; Wait-ForEnter }
         'L' { Invoke-LockDownCase; Wait-ForEnter }
-        '8' { Invoke-DeploySharedBastion; Wait-ForEnter }
-        '9' { Invoke-DestroySharedBastion; Wait-ForEnter }
         { $_ -in @('Q', 'QUIT', 'EXIT') } { return }
         default {
             Write-Host "Not a valid option." -ForegroundColor Yellow

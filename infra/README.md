@@ -162,7 +162,7 @@ those two once, and every case from here on just works.
    Terraform state each time - never written to `infra\.cases\`; see
    [SECURITY.md](SECURITY.md)). Both clouds launch a real `mstsc.exe`
    session - on Azure that requires the shared Standard Bastion from
-   `[8]` to be up; see "Connecting on Azure" below. Once inside, the
+   `[B]` to be up; see "Connecting on Azure" below. Once inside, the
    case's evidence is mounted as `D:` (the bootstrap falls back to the
    next free letter if `D:` is taken, and records which one it used in
    `C:\ir-case-mount.txt`), and this repo's own
@@ -185,6 +185,67 @@ those two once, and every case from here on just works.
 `[7] List cases` shows every case this console has created, its cloud,
 status, and storage location.
 
+### Shared infrastructure - created once, reused by every case
+
+Networking and tools storage are deliberately **not** part of the per-case
+Terraform. A case is disposable; a VNet is not, and most organisations
+already have one they want these hosts to live in. Re-uploading a KAPE zip
+for every case would be equally absurd. So both are one-time prerequisites,
+and both are menu options rather than commands to hand-type:
+
+- **`[8] Case networking`** creates the VNet/VPC and subnet an
+  investigation host launches into, and deletes it again. On AWS this also
+  creates a **NAT Gateway**, which is not optional: the host has no public
+  IP by design, and an Internet Gateway only carries traffic for instances
+  that *do*, so without NAT the host boots, never reaches SSM or the
+  bootstrap script, and bills the whole time. It costs about $0.045/hr, so
+  delete it when you're done. Azure needs no NAT - a VM with no public IP
+  still gets outbound access from the platform - and a VNet costs nothing
+  idle.
+- **`[9] Tools storage`** creates the private bucket/storage account
+  holding your licensed `kape.zip`, uploads or replaces that zip, and
+  deletes the storage. KAPE can't be redistributed, so it isn't in this
+  repo and can't be fetched from anywhere public - each organisation
+  stages its own copy once, in its own account, and every host reads it
+  read-only using the identity it already has. No keys, nothing to expire.
+- **`[B] Azure shared Bastion`** deploys or destroys the per-VNet Bastion
+  (see "Connecting on Azure" above). It bills **hourly from creation**
+  whether or not anyone connects, which is why destroying it is a
+  first-class action rather than a footnote.
+- **`[P]`** prints what `[8]`/`[9]` recorded.
+
+What they recorded is saved to `infra\.prereqs.json` (gitignored,
+bookkeeping only - never credentials, same rule as `infra\.cases\`) and
+offered as the **default** at `[2] Create a new case`. That turns the
+subnet resource id and tools account id from things you keep on a sticky
+note into a keypress, which is where copy/paste errors used to come from.
+
+### Teardown and cost
+
+- **`[C] Check what is still billing`** sweeps AWS and/or Azure for
+  anything that could still be charging, and is worth running after every
+  teardown. Checking by eye reliably misses the quiet ones: an EBS volume
+  or managed disk bills whether or not it's attached to anything; an
+  Elastic IP bills precisely when it is *not* associated; a NAT Gateway
+  bills until its state actually reads `deleted`; a Bastion bills by the
+  hour whether or not anyone uses it. Free leftovers (VPCs, resource
+  groups) are listed separately so they don't look like charges. Answer
+  yes to the all-regions/all-subscriptions sweep - something created in a
+  region you've since forgotten about is the usual way a "torn down"
+  account keeps billing.
+- **`[D] Delete a case completely`** destroys the host *and* the evidence,
+  removes the Terraform workspace, and deletes the local case record. It
+  requires you to type the case ID, because it is irreversible. On AWS it
+  empties the S3 bucket first and then lets Terraform delete the empty
+  bucket: the module sets no `force_destroy`, on purpose, so a stray
+  `terraform destroy` can never take evidence with it - which also means
+  Terraform can't remove a bucket with anything in it. If the case's
+  storage is under a COMPLIANCE immutability lock, this will *fail*, and
+  that is the retention policy working as intended.
+
+Use **`[6] Archive`**, not `[D]`, for a case that might still be needed:
+it keeps the evidence and only stops the compute billing.
+
 ### Connecting on Azure - two options, pick per case
 
 On **AWS**, `[4]` is settled: an SSM port-forwarding tunnel plus a normal
@@ -198,7 +259,7 @@ On **Azure** you choose per case at `[2]`, via `access_method`:
 | Public IP on host | Yes | No |
 | Inbound port | 3389, open **only to your own /32, only while connected** | None, ever |
 | Outbound egress | Provided by the public IP | **You must supply a NAT Gateway** |
-| Setup | None | Deploy the shared Bastion once (`[8]`) |
+| Setup | None | Deploy the shared Bastion once (`[B]`) |
 
 **Why `rdp-allowlist` is the default.** Standard Bastion costs about as
 much as the VM it fronts - $0.29/hr against $0.376/hr for the default
@@ -266,7 +327,7 @@ infra/
     azure-case/                    Same shape, Azure resources
     azure-bastion/                 Shared, per-VNET Standard Bastion (AzureBastionSubnet
                                     + public IP + host, tunneling enabled). Deployed
-                                    ONCE per VNet via [8], destroyed via [9] - not
+                                    ONCE per VNet via [B], destroyed via [B] - not
                                     per case, because Azure allows only one Bastion
                                     per VNet. Its own state, default workspace.
   scripts/
@@ -286,9 +347,29 @@ infra/
                                     uses the host's own IAM role / managed identity),
                                     runs ..\scripts\Setup-Workstation.ps1, applies
                                     baseline host hardening
+    New-AwsTestNetwork.ps1          Creates/deletes the AWS VPC, subnets and NAT
+                                    Gateway a host launches into - run from [8]
+    New-AzureTestNetwork.ps1        Same for the Azure VNet and subnet - run from [8]
+    New-ToolsStorage.ps1            Creates/deletes the private bucket or storage
+                                    account holding your licensed kape.zip, and
+                                    uploads it - run from [9]
+    Test-AwsTeardown.ps1            Reports anything in AWS that could still be
+                                    billing after a teardown - run from [C]
+    Test-AzureTeardown.ps1          Same for Azure - run from [C]
+    Remove-AwsCaseStorage.ps1       Empties (or deletes) a versioned evidence
+                                    bucket, which `aws s3 rb --force` cannot -
+                                    run from [D]
   .cases/                          Local case bookkeeping (gitignored) - see
                                     "Accounts, tokens, and secrets" above
+  .prereqs.json                    Which shared network/tools storage this machine
+                                    created, so [2] can offer them as defaults
+                                    (gitignored, bookkeeping only)
 ```
+
+Every one of those scripts is reachable from the console, and none of them
+needs to be run by hand - the menu prompts for what they need and passes it
+through. They remain directly runnable for scripted teardown or when you
+want to pass a non-default flag.
 
 ## Getting KAPE onto the host
 

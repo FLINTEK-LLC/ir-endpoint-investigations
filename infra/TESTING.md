@@ -142,53 +142,52 @@ If `2025-datacenter-g2` is not listed, note one that is (e.g.
 
 ## Step 5 - Create a throwaway test network
 
-This project never creates your network - it only attaches to one. Make a
-disposable one:
+The per-case Terraform never creates your network - it only attaches to one,
+because a case is disposable and a VNet is not. Make a disposable one from the
+console:
 
 ```powershell
-az group create --name rg-ir-test-network --location eastus
+.\Start-CloudConsole.ps1
 ```
 
-```powershell
-az network vnet create --resource-group rg-ir-test-network --name vnet-ir-test --address-prefix 10.20.0.0/16 --subnet-name subnet-ir-test --subnet-prefix 10.20.1.0/24
-```
+**`[8] Case networking`** > Azure > *Create it*.
 
-Get the subnet resource ID - Step 8 asks for it:
+That creates a resource group, a VNet (`10.20.0.0/16`) and a subnet
+(`10.20.1.0/24`), then prints the subnet **resource ID** that Step 8 needs.
 
-```powershell
-az network vnet subnet show --resource-group rg-ir-test-network --vnet-name vnet-ir-test --name subnet-ir-test --query id -o tsv
-```
+Paste that ID back when `[8]` asks. It is saved to `infra\.prereqs.json` and
+offered as the default at Step 8, so you never have to keep it on a sticky
+note - which is where copy/paste errors came from.
+
+Unlike AWS there is no NAT Gateway here, and that asymmetry is real rather
+than an oversight: an Azure VM with no public IP still gets outbound internet
+through the platform's default outbound access. The AWS host genuinely cannot,
+which is why that path pays for a NAT Gateway and this one does not.
 
 ## Step 6 - (Optional) Stage KAPE so the host can actually parse
 
 Skip if you only want to prove the infrastructure. Do it if you want a host
 that can genuinely work a case.
 
-```powershell
-az group create --name rg-ir-tools --location eastus
-```
+**`[9] Tools storage`** > Azure > *Create it*, giving it the path to your
+licensed `kape.zip` when prompted.
 
-```powershell
-az storage account create --name stirtools00001 --resource-group rg-ir-tools --sku Standard_LRS --min-tls-version TLS1_2 --allow-blob-public-access false
-```
+That creates a resource group and a storage account with a random suffix
+(storage account names are globally unique, and must be 3-24 lowercase
+letters and digits with no hyphens - the script enforces this rather than
+letting Azure reject it later), creates the container, uploads the zip, and
+prints the storage account **resource ID** Step 8 needs. Paste it back when
+asked and Step 8 will offer it as the default.
 
-Storage account names are globally unique, so change the digits if that one
-is taken. Then, using the name you settled on:
+Container creation uses `--auth-mode login`, i.e. your own RBAC rather than an
+account key - which is why Step 3 matters. If it fails with an authorization
+error, that role assignment has not propagated yet.
 
-```powershell
-az storage container create --name irtools --account-name stirtools00001 --auth-mode login
-```
+To replace the zip later without recreating the account, use `[9]` >
+*Upload/replace kape.zip*.
 
-```powershell
-az storage blob upload --account-name stirtools00001 --container-name irtools --name kape.zip --file C:\path\to\kape.zip --auth-mode login
-```
-
-```powershell
-az storage account show --name stirtools00001 --query id -o tsv
-```
-
-Keep that resource ID for Step 8. README.md's "Getting KAPE onto the host"
-explains why this is a separate account from evidence storage.
+README.md's "Getting KAPE onto the host" explains why this is a separate
+account from evidence storage.
 
 ## Step 7 - Get a Velociraptor binary
 
@@ -312,43 +311,62 @@ That is the full loop: collector to storage to the host's `D:` drive.
 
 ## Step 12 - Tear it all down
 
+Everything below is a console option. Nothing here needs a hand-typed command.
+
 ```powershell
 .\Start-CloudConsole.ps1
 ```
 
-Use `[L]` to lock down RDP if you left it open, then `[5]` to destroy the
-investigation host - answer **no** to respin.
+### Delete the case (host and evidence)
 
-Then remove the case's storage. The TUI has no one-click "destroy evidence"
-button on purpose:
+Use **`[L]`** first to lock down RDP if you left it open, then
+**`[D] Delete a case completely`**, pick the case, and type the case ID to
+confirm.
 
-```powershell
-cd C:\Tools\Projects\ir-endpoint-investigations\infra\environments\azure-case
-```
+That destroys the host and its disks, deletes the evidence storage, removes
+the Terraform workspace, and deletes the local case record. It is
+irreversible, which is why it asks you to type the ID rather than offering a
+single keypress.
 
-```powershell
-terraform workspace select test-001
-```
+If the case's storage is under a **locked** immutability policy, this will
+fail - and that is the retention policy working exactly as intended. Evidence
+under a COMPLIANCE-equivalent lock cannot be deleted early by anyone,
+including you. Wait for the retention to expire.
 
-```powershell
-terraform destroy -auto-approve -var="case_id=test-001" -var="location=eastus" -var="subnet_id=<from Step 5>" -var="access_method=rdp-allowlist" -var="enable_immutability=false"
-```
+If you only want to stop paying for compute and keep the evidence, use
+**`[5] Destroy the investigation host`** or **`[6] Archive this case`**
+instead.
 
-Then the resource groups Terraform never owned:
+### Delete the shared network and tools storage
 
-```powershell
-az group delete --name rg-ir-test-network --yes
-```
+- **`[8] Case networking`** > Azure > *Delete it*
+- **`[9] Tools storage`** > Azure > *Delete it*
 
-```powershell
-az group delete --name rg-ir-tools --yes
-```
+Both are optional if you plan to test again shortly: a VNet costs nothing
+idle, and a ~50 MB KAPE zip costs pennies a month. Keeping them saves
+repeating Steps 5 and 6.
 
-Confirm nothing is left:
+### Confirm you are not still being billed
 
-```powershell
-az resource list --output table
-```
+**`[C] Check what is still billing`** > Azure (or Both), and say yes to the
+all-subscriptions sweep.
+
+That reports the things that bill quietly rather than obviously:
+
+- **Managed disks bill whether or not they are attached.** A VM deleted
+  without its disks is the classic Azure surprise - the disk survives, is
+  invisible in the VM list, and costs exactly what it did before.
+- **A Bastion bills per hour from creation**, whether or not anyone connects.
+  It is the most expensive thing this project can leave running.
+- **Standard SKU public IPs bill even when associated with nothing.**
+- A stopped VM still bills for its disks, and "Stopped" is not the same state
+  as "Stopped (deallocated)" - only the latter stops compute charges.
+
+Resource groups, VNets and NSGs cost nothing, so they are listed separately as
+leftovers rather than charges. `NetworkWatcherRG` is created automatically by
+Azure and is free - seeing it does not mean you missed something.
+
+Clear output is `Nothing billable found. You are clear.`
 
 ## Troubleshooting
 

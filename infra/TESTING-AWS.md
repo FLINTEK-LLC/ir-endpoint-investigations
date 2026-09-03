@@ -117,12 +117,7 @@ Quotas > EC2 > *Running On-Demand Standard instances*), or pick `t3.large`
 
 ## Step 5 - Create a test VPC with a NAT Gateway
 
-There is a script for this, because the ordering is fiddly and getting it
-wrong produces a network that looks correct and routes nowhere:
-
-```powershell
-.\scripts\New-AwsTestNetwork.ps1
-```
+In the console: **`[8] Case networking`** > AWS > *Create it*.
 
 It creates a VPC (`10.30.0.0/16`), a public and a private subnet, an Internet
 Gateway, an Elastic IP, and a **NAT Gateway in the public subnet serving the
@@ -136,14 +131,14 @@ subnet even though it serves the private one, the route must wait for it, and
 DNS hostnames must be enabled on the VPC or SSM cannot resolve its endpoints.
 
 **The NAT Gateway bills from the moment it is created** (~$0.045/hr). Tear the
-whole network down with:
+whole network down with `[8]` > AWS > *Delete it*.
 
-```powershell
-.\scripts\New-AwsTestNetwork.ps1 -Delete
-```
+Everything is tagged `Project=ir-endpoint-investigations`, which is how the
+delete finds it - it will not touch a VPC you created another way.
 
-Everything is tagged `Project=ir-endpoint-investigations`, which is how
-`-Delete` finds it - it will not touch a VPC you created another way.
+At the end, `[8]` asks you to paste back the private subnet ID it printed. That
+is not busywork: it saves it to `infra\.prereqs.json` and offers it as the
+**default** at Step 8, so you never retype it.
 
 <details>
 <summary>Prefer the console? (equivalent click-through)</summary>
@@ -161,16 +156,16 @@ which subnets have egress.
 
 Skip to prove the infrastructure; do it for a host that can actually parse.
 
-```powershell
-aws s3 mb s3://ir-tools-CHANGEME --region us-east-1 --profile ir-cloud
-```
+In the console: **`[9] Tools storage`** > AWS > *Create it*, giving it the path
+to your licensed `kape.zip` when prompted.
 
-```powershell
-aws s3 cp C:\path\to\kape.zip s3://ir-tools-CHANGEME/kape.zip --profile ir-cloud
-```
+It creates a private bucket with a random suffix (bucket names are globally
+unique), blocks public access on it explicitly, and uploads the zip. The
+instance role gets read-only access to this bucket alone. As with `[8]`, paste
+the bucket name back when asked and Step 8 will offer it as the default.
 
-Bucket names are globally unique, so change `CHANGEME`. Keep the name for
-Step 8. The instance role gets read-only access to this bucket alone.
+To replace the zip later without recreating the bucket, use `[9]` >
+*Upload/replace kape.zip*.
 
 ## Step 7 - Get a Velociraptor binary
 
@@ -238,79 +233,68 @@ aws s3 ls s3://ir-case-awstest-01/ --profile ir-cloud
 
 ## Step 12 - Tear down
 
-**Order matters: the NAT Gateway is the thing quietly costing money.**
+Everything below is a console option. Nothing here needs a hand-typed command.
 
-```powershell
-.\Start-CloudConsole.ps1
-```
+### Delete the case (host and evidence)
 
-Use `[5]` to destroy the investigation host, answering **no** to respin. Then
-remove the case's storage:
+**`[D] Delete a case completely`**, pick the case, and type the case ID to
+confirm.
 
-```powershell
-cd C:\Tools\Projects\ir-endpoint-investigations\infra\environments\aws-case
-```
+That destroys the investigation host and its volumes, empties and deletes the
+evidence bucket, removes the Terraform workspace, and deletes the local case
+record. It is irreversible, which is why it asks you to type the ID.
 
-```powershell
-terraform workspace select awstest-01
-```
+Emptying the bucket is a separate act from destroying it, on purpose. The
+module sets no `force_destroy`, so a stray `terraform destroy` can never take
+evidence with it - which also means Terraform cannot remove a bucket with
+anything in it. `[D]` empties it first, then lets Terraform delete the empty
+bucket, so state stays consistent.
 
-```powershell
-terraform destroy -auto-approve -var="case_id=awstest-01" -var="region=us-east-1" -var="vpc_id=<vpc>" -var="subnet_id=<subnet>" -var="enable_immutability=false"
-```
+If you only want to stop paying for compute and keep the evidence, use
+**`[5] Destroy the investigation host`** or **`[6] Archive this case`**
+instead.
 
-The evidence bucket has versioning enabled, so it will refuse to delete while
-it holds object versions - and `aws s3 rm --recursive` does **not** clear
-them: it removes current versions and leaves every noncurrent version and
-delete marker behind, so it looks like it worked and the bucket delete still
-fails. Use:
+### Delete the shared network
 
-```powershell
-.\scripts\Remove-AwsCaseStorage.ps1 -BucketName ir-case-awstest-01
-```
+**`[8] Case networking`** > AWS > *Delete it*.
 
-It shows the version count and total size, asks you to type the bucket name,
-then removes every version and delete marker before deleting the bucket.
-**This destroys the evidence** - there is no undo. If the case was created
-with immutability enabled, versions still under retention will refuse to
-delete and the script says so rather than pretending otherwise; that is
-Object Lock working as intended.
+This is the one that matters most for cost: the NAT Gateway bills ~$0.045/hr
+from creation, and the Elastic IP keeps billing once it is no longer
+associated. The delete does them in the order AWS requires - NAT Gateway
+first (waiting for it to actually go), then the Elastic IP, then subnets,
+route tables, Internet Gateway, and finally the VPC.
 
-Then delete the network, NAT Gateway and Elastic IP together:
+Leave the network up if you plan to test again shortly; a VPC itself is free,
+but the NAT Gateway inside it is not.
 
-```powershell
-cd C:\Tools\Projects\ir-endpoint-investigations\infra
-```
+### Delete the tools bucket
 
-```powershell
-.\scripts\New-AwsTestNetwork.ps1 -Delete
-```
+**`[9] Tools storage`** > AWS > *Delete it*. Optional - a ~50 MB zip costs
+pennies a month, and keeping it saves re-uploading KAPE next time.
 
-Finally, verify nothing is still billing:
+### Confirm you are not still being billed
 
-```powershell
-.\scripts\Test-AwsTeardown.ps1
-```
+**`[C] Check what is still billing`** > AWS (or Both), and say yes to the
+all-regions sweep.
 
 That checks the things that bill quietly rather than obviously - EBS volumes
 (billed attached **or** detached), Elastic IPs (billed precisely when *not*
 associated), NAT Gateways (billed until the state actually reads `deleted`),
-snapshots, and any `ir-case-*` / `ir-tools-*` S3 bucket. It reports free
-leftovers like VPCs separately so they do not look like charges.
+snapshots, and any `ir-case-*` / `ir-tools-*` S3 bucket. Free leftovers like
+VPCs are reported separately so they do not look like charges.
 
-Add `-AllRegions` to sweep every enabled region, which is the only way to
-catch something created in a region you have since forgotten about:
+The all-regions sweep takes about a minute and is the one that matters:
+something created in a region you have since forgotten about is the usual way
+a "torn down" account keeps charging.
 
-```powershell
-.\scripts\Test-AwsTeardown.ps1 -AllRegions
-```
+Clear output is `Nothing billable found. You are clear.`
 
 > **A note on checking by hand.** If you write your own filter, quote the
 > string: `--query "NatGateways[?State!='deleted'].NatGatewayId"`. Without
 > the inner quotes, JMESPath reads bare `deleted` as a *field name*, which
-> resolves to null, so `State != null` matches everything and already-deleted
-> gateways are reported as live. The script filters in PowerShell instead,
-> specifically to sidestep that.
+> matches every gateway including deleted ones - so a fully torn-down account
+> reports a NAT Gateway that is not there. `[C]` avoids this entirely by
+> filtering in PowerShell rather than JMESPath.
 
 ## Troubleshooting
 

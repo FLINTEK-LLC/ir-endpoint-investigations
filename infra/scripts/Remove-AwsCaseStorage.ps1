@@ -31,8 +31,21 @@
 .PARAMETER BucketName
     The bucket to destroy, e.g. ir-case-awstest-01.
 
+.PARAMETER EmptyOnly
+    Delete every object version and delete marker, but leave the (now empty)
+    bucket in place.
+
+    This is what a full case teardown uses. The bucket is a Terraform-managed
+    resource, so letting Terraform destroy it keeps state consistent; deleting
+    it out from under Terraform leaves a resource in state that no longer
+    exists. Terraform cannot empty it itself, though - the module sets no
+    force_destroy, on purpose, so a stray `terraform destroy` can never take
+    evidence with it. Emptying is therefore a deliberate, separate act, which
+    is the whole point.
+
 .PARAMETER Force
-    Skip the typed confirmation. For scripted teardown only.
+    Skip the typed confirmation. For scripted teardown only - the cloud
+    console does its own confirmation before passing this.
 
 .EXAMPLE
     .\Remove-AwsCaseStorage.ps1 -BucketName ir-case-awstest-01
@@ -44,6 +57,7 @@ param(
 
     [string]$AwsProfile = 'ir-cloud',
     [string]$Region = 'us-east-1',
+    [switch]$EmptyOnly,
     [switch]$Force
 )
 
@@ -102,7 +116,11 @@ if ($objVersions.Count -eq 0 -and $markers.Count -eq 0) {
     Write-Host "Bucket is already empty." -ForegroundColor DarkGray
 } else {
     Write-Host ""
-    Write-Host "This permanently destroys the evidence in this bucket. There is no undo." -ForegroundColor Red
+    if ($EmptyOnly) {
+        Write-Host "This permanently destroys the evidence in this bucket (the empty bucket is kept). There is no undo." -ForegroundColor Red
+    } else {
+        Write-Host "This permanently destroys the evidence in this bucket. There is no undo." -ForegroundColor Red
+    }
     if (-not $Force) {
         $typed = Read-Host "Type the bucket name to confirm"
         if ($typed -ne $BucketName) {
@@ -130,6 +148,11 @@ if ($objVersions.Count -eq 0 -and $markers.Count -eq 0) {
         Write-Host "bucket cannot be removed until it expires. That is the feature working." -ForegroundColor Yellow
         return
     }
+}
+
+if ($EmptyOnly) {
+    Write-Host "Bucket s3://$BucketName is now empty and was kept." -ForegroundColor Green
+    return
 }
 
 Invoke-Aws s3api delete-bucket --bucket $BucketName | Out-Null
