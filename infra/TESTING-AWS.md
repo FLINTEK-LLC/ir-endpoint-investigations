@@ -276,18 +276,31 @@ cd C:\Tools\Projects\ir-endpoint-investigations\infra
 .\scripts\New-AwsTestNetwork.ps1 -Delete
 ```
 
-Finally confirm nothing survives:
+Finally, verify nothing is still billing:
 
 ```powershell
-aws ec2 describe-nat-gateways --region us-east-1 --profile ir-cloud --query "NatGateways[?State!='deleted'].NatGatewayId" --output text
+.\scripts\Test-AwsTeardown.ps1
 ```
+
+That checks the things that bill quietly rather than obviously - EBS volumes
+(billed attached **or** detached), Elastic IPs (billed precisely when *not*
+associated), NAT Gateways (billed until the state actually reads `deleted`),
+snapshots, and any `ir-case-*` / `ir-tools-*` S3 bucket. It reports free
+leftovers like VPCs separately so they do not look like charges.
+
+Add `-AllRegions` to sweep every enabled region, which is the only way to
+catch something created in a region you have since forgotten about:
 
 ```powershell
-aws ec2 describe-instances --region us-east-1 --profile ir-cloud --query "Reservations[].Instances[?State.Name!='terminated'].InstanceId" --output text
+.\scripts\Test-AwsTeardown.ps1 -AllRegions
 ```
 
-Both empty means the meters are off. An un-deleted NAT Gateway is the most
-common way to keep paying after a test.
+> **A note on checking by hand.** If you write your own filter, quote the
+> string: `--query "NatGateways[?State!='deleted'].NatGatewayId"`. Without
+> the inner quotes, JMESPath reads bare `deleted` as a *field name*, which
+> resolves to null, so `State != null` matches everything and already-deleted
+> gateways are reported as live. The script filters in PowerShell instead,
+> specifically to sidestep that.
 
 ## Troubleshooting
 
