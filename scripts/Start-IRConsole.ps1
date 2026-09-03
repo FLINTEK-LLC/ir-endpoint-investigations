@@ -26,29 +26,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function Read-Default {
-    param([string]$Prompt, [string]$Default)
-    $val = Read-Host "$Prompt [$Default]"
-    if ([string]::IsNullOrWhiteSpace($val)) { return $Default }
-    return $val
-}
-
-function Read-Required {
-    param([string]$Prompt)
-    while ($true) {
-        $val = Read-Host "$Prompt (blank to cancel)"
-        if ([string]::IsNullOrWhiteSpace($val)) { return $null }
-        return $val
-    }
-}
-
-function Read-YesNo {
-    param([string]$Prompt, [bool]$Default = $false)
-    $suffix = if ($Default) { 'Y/n' } else { 'y/N' }
-    $val = Read-Host "$Prompt [$suffix]"
-    if ([string]::IsNullOrWhiteSpace($val)) { return $Default }
-    return $val.Trim().ToUpper().StartsWith('Y')
-}
+# Prompt helpers (including arrow-key selection) are shared with
+# infra\Start-CloudConsole.ps1 - see IRPrompt.ps1's header.
+. (Join-Path $PSScriptRoot 'IRPrompt.ps1')
 
 function Invoke-DeployedScript {
     # Runs a script from <KapePath>\Modules\bin - the deployed/live copy, not
@@ -79,35 +59,36 @@ function Invoke-CheckoutScript {
     Write-Host "(exit code $LASTEXITCODE)" -ForegroundColor DarkGray
 }
 
-function Wait-ForEnter {
-    Write-Host ""
-    Read-Host "Press Enter to return to the menu" | Out-Null
-}
+$script:MenuItems = @(
+    [pscustomobject]@{ Separator = 'Setup and maintenance' }
+    [pscustomobject]@{ Value = '1'; Label = 'Full workstation setup (first time)' }
+    [pscustomobject]@{ Value = '2'; Label = 'Verify KAPE toolchain (fast, no network)' }
+    [pscustomobject]@{ Value = '3'; Label = 'Update KAPE toolchain (rule sets, EZ Tools re-sync)' }
+    [pscustomobject]@{ Value = '4'; Label = 'Update broader analyst toolset (EZ Tools GUI, Sysinternals, Autopsy)' }
+    [pscustomobject]@{ Value = '5'; Label = 'Deploy/redeploy this module onto the KAPE install' }
+    [pscustomobject]@{ Separator = 'Parsing' }
+    [pscustomobject]@{ Value = '6'; Label = 'Parse a single host collection' }
+    [pscustomobject]@{ Value = '7'; Label = 'Parse a case (multiple hosts)' }
+    [pscustomobject]@{ Value = '8'; Label = 'Rebuild review workbook/bundle from existing results' }
+    [pscustomobject]@{ Separator = '' }
+    [pscustomobject]@{ Value = '9'; Label = 'Change KAPE path' }
+    [pscustomobject]@{ Value = 'Q'; Label = 'Quit' }
+)
 
-function Show-Menu {
+function Show-MenuHeader {
     Clear-Host
     $kapeStatus = if (Test-Path (Join-Path $script:KapePath 'kape.exe')) { 'found' } else { 'kape.exe NOT found here' }
     Write-Host "=================================================="
     Write-Host " IR Endpoint Investigations - Console"
     Write-Host "=================================================="
     Write-Host "KAPE path: $script:KapePath ($kapeStatus)"
-    Write-Host ""
-    Write-Host " [1] Full workstation setup (first time)"
-    Write-Host " [2] Verify KAPE toolchain (fast, no network)"
-    Write-Host " [3] Update KAPE toolchain (rule sets, EZ Tools re-sync)"
-    Write-Host " [4] Update broader analyst toolset (EZ Tools GUI, Sysinternals, Autopsy)"
-    Write-Host " [5] Deploy/redeploy this module onto the KAPE install"
-    Write-Host " [6] Parse a single host collection"
-    Write-Host " [7] Parse a case (multiple hosts)"
-    Write-Host " [8] Rebuild review workbook/bundle from existing results"
-    Write-Host " [9] Change KAPE path"
-    Write-Host " [Q] Quit"
-    Write-Host ""
 }
 
 while ($true) {
-    Show-Menu
-    $choice = (Read-Host "Choose an option").Trim().ToUpper()
+    Show-MenuHeader
+    $choice = Read-Choice -Prompt 'Choose an option:' -Items $script:MenuItems `
+        -DisplayProperty Label -ValueProperty Value
+    if (-not $choice) { continue }
 
     switch ($choice) {
         '1' {

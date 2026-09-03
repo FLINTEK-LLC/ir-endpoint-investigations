@@ -73,90 +73,14 @@ $script:AzureEnvDir = Join-Path $InfraRoot 'environments\azure-case'
 # it can't be per-case, and what it costs per hour.
 $script:AzureBastionEnvDir = Join-Path $InfraRoot 'environments\azure-bastion'
 
+# Prompt helpers live in one place for both consoles - see that file's header
+# for why arrow-key selection falls back to a numbered list. Dot-sourced rather
+# than duplicated: the two consoles' private copies had already drifted.
+. (Join-Path (Split-Path -Parent $InfraRoot) 'scripts\IRPrompt.ps1')
+
 # ---------------------------------------------------------------------------
 # Same prompt-helper pattern as scripts\Start-IRConsole.ps1
 # ---------------------------------------------------------------------------
-
-function Read-Default {
-    param([string]$Prompt, [string]$Default)
-    $val = Read-Host "$Prompt [$Default]"
-    if ([string]::IsNullOrWhiteSpace($val)) { return $Default }
-    return $val
-}
-
-function Read-Required {
-    param([string]$Prompt)
-    while ($true) {
-        $val = Read-Host "$Prompt (blank to cancel)"
-        if ([string]::IsNullOrWhiteSpace($val)) { return $null }
-        return $val
-    }
-}
-
-function Read-YesNo {
-    param([string]$Prompt, [bool]$Default = $false)
-    $suffix = if ($Default) { 'Y/n' } else { 'y/N' }
-    $val = Read-Host "$Prompt [$suffix]"
-    if ([string]::IsNullOrWhiteSpace($val)) { return $Default }
-    return $val.Trim().ToUpper().StartsWith('Y')
-}
-
-function Read-Choice {
-    # Numbered picker. Every free-text prompt this replaced was a place an
-    # operator could - and did - mistype something the cloud then rejected
-    # minutes later: a VM size without its Standard_ prefix, a region that
-    # does not exist, a case id that does not match a workspace.
-    #
-    # -Items may be plain strings or objects; -DisplayProperty/-ValueProperty
-    # pick what to show and what to return. -AllowCustom adds a final "type
-    # it myself" entry for the cases a list cannot cover.
-    param(
-        [string]$Prompt,
-        [object[]]$Items,
-        [string]$DisplayProperty,
-        [string]$ValueProperty,
-        [string]$Default,
-        [switch]$AllowCustom,
-        [string]$CustomPrompt = 'Enter a value'
-    )
-    if (-not $Items -or $Items.Count -eq 0) {
-        if ($AllowCustom) { return Read-Default -Prompt $CustomPrompt -Default $Default }
-        return $null
-    }
-
-    Write-Host ""
-    Write-Host $Prompt -ForegroundColor Cyan
-    $defaultIndex = $null
-    for ($i = 0; $i -lt $Items.Count; $i++) {
-        $item = $Items[$i]
-        $display = if ($DisplayProperty) { $item.$DisplayProperty } else { [string]$item }
-        $value = if ($ValueProperty) { $item.$ValueProperty } else { [string]$item }
-        if ($Default -and $value -eq $Default) { $defaultIndex = $i + 1 }
-        Write-Host ("  [{0}] {1}" -f ($i + 1), $display)
-    }
-    $customIndex = $null
-    if ($AllowCustom) {
-        $customIndex = $Items.Count + 1
-        Write-Host ("  [{0}] Something else - type it myself" -f $customIndex)
-    }
-
-    while ($true) {
-        $hint = if ($defaultIndex) { " [$defaultIndex]" } else { '' }
-        $raw = (Read-Host "Choose$hint").Trim()
-        if (-not $raw -and $defaultIndex) { $raw = "$defaultIndex" }
-        $n = 0
-        if ([int]::TryParse($raw, [ref]$n)) {
-            if ($customIndex -and $n -eq $customIndex) {
-                return Read-Default -Prompt $CustomPrompt -Default $Default
-            }
-            if ($n -ge 1 -and $n -le $Items.Count) {
-                $chosen = $Items[$n - 1]
-                return $(if ($ValueProperty) { $chosen.$ValueProperty } else { [string]$chosen })
-            }
-        }
-        Write-Host "Enter a number from the list." -ForegroundColor Yellow
-    }
-}
 
 # Regions offered in the picker. Not exhaustive - "Something else" covers the
 # rest - just the ones people actually reach for, so the common path is a
@@ -182,11 +106,6 @@ function Read-CaseId {
 
 function Read-CloudChoice {
     return Read-Choice -Prompt "Cloud provider:" -Items @('Azure', 'AWS') -Default 'Azure'
-}
-
-function Wait-ForEnter {
-    Write-Host ""
-    Read-Host "Press Enter to return to the menu" | Out-Null
 }
 
 # ---------------------------------------------------------------------------
@@ -545,7 +464,11 @@ function Test-AwsAmiParameter {
     param([string]$Region, [string]$AwsProfile, [string]$ParameterName)
     $r = Invoke-AwsJson -AwsProfile $AwsProfile -CliArgs @('ssm', 'get-parameters', '--names', $ParameterName, '--region', $Region)
     if (-not $r) { return @{ Checked = $false; Ok = $true } }
-    $found = @($r.Parameters).Count -gt 0
+    # Filtered, like every other cloud-API enumeration in this project: a
+    # response that omits the key entirely yields $null, and @($null) is a
+    # ONE-element array, which would report a nonexistent AMI parameter as
+    # found and then index [0] into nothing.
+    $found = @($r.Parameters | Where-Object { $_ }).Count -gt 0
     return @{ Checked = $true; Ok = $found; Value = $(if ($found) { $r.Parameters[0].Value } else { $null }) }
 }
 
@@ -564,7 +487,7 @@ function Test-AwsSubnetEgress {
     if (-not $rt) { return @{ Checked = $false; HasEgress = $true; Via = 'unknown' } }
 
     # A subnet with no explicit association uses the VPC main route table.
-    if (@($rt.RouteTables).Count -eq 0) {
+    if (@($rt.RouteTables | Where-Object { $_ }).Count -eq 0) {
         $sn = Invoke-AwsJson -AwsProfile $AwsProfile -CliArgs @('ec2', 'describe-subnets', '--region', $Region, '--subnet-ids', $SubnetId)
         if (-not $sn) { return @{ Checked = $false; HasEgress = $true; Via = 'unknown' } }
         $vpcId = $sn.Subnets[0].VpcId
@@ -627,7 +550,7 @@ function Test-VmSizeAvailable {
         $result.Reason = "size '$Size' does not exist in $Location"
     } else {
         $result.Checked = $true
-        $restrictions = @($exact.restrictions)
+        $restrictions = @($exact.restrictions | Where-Object { $_ })
         if ($restrictions.Count -gt 0) {
             $result.Available = $false
             $result.Reason = "your subscription is capacity-restricted for '$Size' in $Location"
@@ -660,9 +583,13 @@ function Get-AvailableVmSizes {
     }
 
     $candidates = foreach ($sku in $skus) {
-        if (@($sku.restrictions).Count -gt 0) { continue }
+        # Both filtered. Unfiltered, a SKU whose restrictions property is
+        # absent rather than empty counts as 1 and gets skipped - which
+        # would silently drop EVERY size and leave the picker empty, the
+        # failure that previously sent Azure a hand-typed size.
+        if (@($sku.restrictions | Where-Object { $_ }).Count -gt 0) { continue }
         $caps = @{}
-        foreach ($c in @($sku.capabilities)) { $caps[$c.name] = $c.value }
+        foreach ($c in @($sku.capabilities | Where-Object { $_ })) { $caps[$c.name] = $c.value }
         $vcpu = 0; $mem = 0.0
         [void][int]::TryParse($caps['vCPUs'], [ref]$vcpu)
         [void][double]::TryParse($caps['MemoryGB'], [ref]$mem)
@@ -728,7 +655,7 @@ function Invoke-CreateCase {
         Write-Host ""
         Write-Host "Looking up VPCs in $($vars['region'])..." -ForegroundColor DarkGray
         $vpcData = Invoke-AwsJson -AwsProfile $vars['aws_profile'] -CliArgs @('ec2', 'describe-vpcs', '--region', $vars['region'])
-        if ($vpcData -and @($vpcData.Vpcs).Count -gt 0) {
+        if ($vpcData -and @($vpcData.Vpcs | Where-Object { $_ }).Count -gt 0) {
             $vpcItems = $vpcData.Vpcs | ForEach-Object {
                 $nameTag = ($_.Tags | Where-Object { $_.Key -eq 'Name' } | Select-Object -First 1).Value
                 [pscustomobject]@{
@@ -748,7 +675,7 @@ function Invoke-CreateCase {
         $subnetData = Invoke-AwsJson -AwsProfile $vars['aws_profile'] -CliArgs @(
             'ec2', 'describe-subnets', '--region', $vars['region'],
             '--filters', "Name=vpc-id,Values=$($vars['vpc_id'])")
-        if ($subnetData -and @($subnetData.Subnets).Count -gt 0) {
+        if ($subnetData -and @($subnetData.Subnets | Where-Object { $_ }).Count -gt 0) {
             $subnetItems = $subnetData.Subnets | ForEach-Object {
                 $e = Test-AwsSubnetEgress -SubnetId $_.SubnetId -Region $vars['region'] -AwsProfile $vars['aws_profile']
                 $mark = if (-not $e.Checked) { '?' } elseif ($e.HasEgress) { 'egress OK' } else { 'NO EGRESS' }
@@ -1593,37 +1520,47 @@ function Invoke-DeleteCaseCompletely {
 # Menu
 # ---------------------------------------------------------------------------
 
-function Show-Menu {
+# The menu is a Read-Choice list rather than a printed block plus Read-Host,
+# so it gets arrow-key navigation for free. Values are the same keys the
+# dispatch switch already used ('1'..'9', 'B', 'C', 'D', 'L', 'Q'), so typing
+# a number still works, scripted/piped input is unchanged, and the numbered
+# fallback on a non-interactive host is byte-for-byte the old behaviour.
+$script:MenuItems = @(
+    [pscustomobject]@{ Separator = 'Case workflow' }
+    [pscustomobject]@{ Value = '1'; Label = 'First-time setup (Terraform/AWS CLI/Azure CLI + auth check)' }
+    [pscustomobject]@{ Value = '2'; Label = 'Create a new case' }
+    [pscustomobject]@{ Value = '3'; Label = "Build this case's offline collector" }
+    [pscustomobject]@{ Value = '4'; Label = 'Connect to the investigation host' }
+    [pscustomobject]@{ Value = '5'; Label = 'Destroy the investigation host (evidence storage kept)' }
+    [pscustomobject]@{ Value = '6'; Label = 'Archive this case (force cold storage now, optional immutability lock)' }
+    [pscustomobject]@{ Value = '7'; Label = 'List cases' }
+    [pscustomobject]@{ Separator = 'Shared infrastructure (create once per cloud account, reused by every case)' }
+    [pscustomobject]@{ Value = '8'; Label = 'Case networking (VNet/VPC + subnet)' }
+    [pscustomobject]@{ Value = '9'; Label = 'Tools storage (your licensed KAPE)' }
+    [pscustomobject]@{ Value = 'B'; Label = 'Azure shared Bastion (bills hourly - deploy/destroy)' }
+    [pscustomobject]@{ Value = 'P'; Label = 'Show what shared infrastructure is recorded' }
+    [pscustomobject]@{ Separator = 'Teardown and cost' }
+    [pscustomobject]@{ Value = 'C'; Label = 'Check what is still billing (AWS/Azure)' }
+    [pscustomobject]@{ Value = 'D'; Label = 'Delete a case completely (host AND evidence - irreversible)' }
+    [pscustomobject]@{ Value = 'L'; Label = "Lock down a case's RDP now (remove its just-in-time rule)" }
+    [pscustomobject]@{ Value = 'Q'; Label = 'Quit' }
+)
+
+function Show-MenuHeader {
     Clear-Host
     Write-Host "=================================================="
     Write-Host " ir-endpoint-investigations - Cloud Console"
     Write-Host "=================================================="
-    Write-Host " Case workflow"
-    Write-Host "  [1] First-time setup (Terraform/AWS CLI/Azure CLI + auth check)"
-    Write-Host "  [2] Create a new case"
-    Write-Host "  [3] Build this case's offline collector"
-    Write-Host "  [4] Connect to the investigation host"
-    Write-Host "  [5] Destroy the investigation host (evidence storage kept)"
-    Write-Host "  [6] Archive this case (force cold storage now, optional immutability lock)"
-    Write-Host "  [7] List cases"
-    Write-Host ""
-    Write-Host " Shared infrastructure (create once per cloud account, reused by every case)"
-    Write-Host "  [8] Case networking (VNet/VPC + subnet)"
-    Write-Host "  [9] Tools storage (your licensed KAPE)"
-    Write-Host "  [B] Azure shared Bastion (bills hourly - deploy/destroy)"
-    Write-Host "  [P] Show what shared infrastructure is recorded"
-    Write-Host ""
-    Write-Host " Teardown and cost"
-    Write-Host "  [C] Check what is still billing (AWS/Azure)"
-    Write-Host "  [D] Delete a case completely (host AND evidence - irreversible)"
-    Write-Host "  [L] Lock down a case's RDP now (remove its just-in-time rule)"
-    Write-Host "  [Q] Quit"
-    Write-Host ""
 }
 
 while ($true) {
-    Show-Menu
-    $choice = (Read-Host "Choose an option").Trim().ToUpper()
+    Show-MenuHeader
+    $choice = Read-Choice -Prompt 'Choose an option:' -Items $script:MenuItems `
+        -DisplayProperty Label -ValueProperty Value
+    # Escape cancels the picker; at the top level there is nothing to cancel
+    # back to, so treat it as "show the menu again" rather than quitting -
+    # quitting on Esc would make a stray keypress destroy an operator's place.
+    if (-not $choice) { continue }
 
     switch ($choice) {
         '1' { Invoke-FirstTimeSetup; Wait-ForEnter }

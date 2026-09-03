@@ -23,11 +23,16 @@ $localDest = Join-Path $KapePath 'Modules\!Local'
 New-Item -ItemType Directory -Path $binDest -Force -ErrorAction SilentlyContinue | Out-Null
 New-Item -ItemType Directory -Path $localDest -Force -ErrorAction SilentlyContinue | Out-Null
 
-# Every script in this folder except Setup-Workstation.ps1, Start-IRConsole.ps1, and
-# this script itself runs on the KAPE install, not just the analyst's checkout -
-# deployed in bulk so a new script added here doesn't also require a matching edit here.
+# Every script in this folder except the four below runs on the KAPE install,
+# not just the analyst's checkout - deployed in bulk so a new script added here
+# doesn't also require a matching edit here.
+#
+# IRPrompt.ps1 is excluded because it is a dot-sourced library for the two
+# interactive consoles, not a runnable script: every deployed script is invoked
+# with -NonInteractive and never prompts, so nothing on the KAPE side has any
+# use for it.
 $deployedScripts = Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' |
-    Where-Object { $_.Name -notin @('Deploy-Module.ps1', 'Setup-Workstation.ps1', 'Start-IRConsole.ps1') }
+    Where-Object { $_.Name -notin @('Deploy-Module.ps1', 'Setup-Workstation.ps1', 'Start-IRConsole.ps1', 'IRPrompt.ps1') }
 $deployedScripts | Copy-Item -Destination $binDest -Force
 $deployedModules = Get-ChildItem -LiteralPath (Join-Path $projectRoot 'Modules\!IR') -Filter 'IR_*.mkape'
 $deployedModules | Copy-Item -Destination $localDest -Force
