@@ -30,10 +30,11 @@ built from; see the Roadmap section below for ideas borrowed from his
 broader workflow that aren't implemented here yet. If you want to go deeper
 than this README, his
 [Antisyphon Training course on Rapid Endpoint Investigations](https://www.antisyphontraining.com/product/workshop-rapid-endpoint-investigations-with-patterson-cake/)
-and the free
-[BHIS hands-on IR workshop](https://www.blackhillsinfosec.com/event/4-hour-hands-on-ir-workshop-rapid-windows-endpoint-triage-w-patterson-cake/)
-he runs are both worth your time - this repo only covers a slice of what he
-teaches.
+and his
+[Rapid Endpoint Triage slides](https://www.blackhillsinfosec.com/wp-content/uploads/2023/12/SLIDES_Rapid-Endpoint-Triage-Patterson-Cake.pdf)
+are both worth your time - he also runs a free four-hour hands-on version
+through BHIS periodically, worth watching for. This repo only covers a slice
+of what he teaches.
 
 This README covers running the tooling. For what to actually do with the
 output - where to start, how to pivot from a detection into a full timeline
