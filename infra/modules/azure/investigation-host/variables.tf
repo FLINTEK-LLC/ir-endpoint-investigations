@@ -242,6 +242,26 @@ variable "tools_container_name" {
   default     = "irtools"
 }
 
+variable "repo_ref" {
+  description = <<-EOT
+    Git ref the investigation host fetches its bootstrap from: a commit SHA
+    (recommended), a tag, or a branch name.
+
+    Defaults to a pinned commit, NOT to "main", on purpose. The host downloads
+    this code at first boot and runs it as SYSTEM, so whatever the ref points
+    at is what executes on a machine that then mounts case evidence. A mutable
+    branch means anyone who can push to it changes that code for every host
+    built afterwards, with nothing to detect it. It also means two hosts built
+    a week apart from identical case settings can run different code, which
+    defeats the point of a reproducible investigation environment.
+
+    Bump this deliberately when you want new hosts to pick up repo changes.
+    A branch name still works if you accept those trade-offs.
+  EOT
+  type        = string
+  default     = "b7f8d5333de7d7d340fb00237af86a26ec564acf"
+}
+
 variable "case_repo_git_url" {
   description = "Git URL for ir-endpoint-investigations, fetched by the bootstrap script so it can call Setup-Workstation.ps1. Override if you maintain a fork."
   type        = string

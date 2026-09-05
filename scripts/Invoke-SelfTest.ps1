@@ -241,6 +241,75 @@ Test-Item 'Case records are guarded on case_id' ($casesGuard -match 'Where-Objec
 Test-Item 'Prereq store lives outside .cases' ($casesGuard -match "PrereqPath = Join-Path \`$InfraRoot '\.prereqs\.json'")
 
 # ---------------------------------------------------------------------------
+Write-Section "5. Security regressions"
+
+# Each of these encodes a finding from the security audit. They are string
+# assertions against the Terraform source rather than plan output, because a
+# plan needs cloud credentials and this suite deliberately runs offline.
+
+$awsHost = Get-Content -Raw (Join-Path $InfraRoot 'modules\aws\investigation-host\main.tf')
+$awsUserData = Get-Content -Raw (Join-Path $InfraRoot 'modules\aws\investigation-host\user_data.ps1.tftpl')
+
+# user_data is readable by any process on the instance via IMDS. The password
+# must not be in it.
+Test-Item 'AWS user_data does not carry the admin password' `
+    (-not ($awsUserData -match '\$\{admin_password\}'))
+Test-Item 'AWS admin password is stored in SSM Parameter Store' `
+    ($awsHost -match 'resource "aws_ssm_parameter" "admin_password"' -and $awsHost -match 'SecureString')
+Test-Item 'AWS SSM parameter read is scoped to this case only' `
+    ($awsHost -match 'aws_ssm_parameter\.admin_password\.arn')
+Test-Item 'AWS instance requires IMDSv2' `
+    ($awsHost -match 'http_tokens\s*=\s*"required"')
+
+# A named account, not the built-in Administrator.
+Test-Item 'AWS creates a named interactive account, not Administrator' `
+    ($awsUserData -notmatch 'net user Administrator' -and $awsUserData -match 'New-LocalUser')
+Test-Item 'AWS password is set without appearing on a command line' `
+    ($awsUserData -match 'ConvertTo-SecureString')
+
+# The bootstrap runs as SYSTEM on a host that mounts evidence, so the ref it
+# is fetched from must not be a mutable branch.
+foreach ($cloud in @('aws', 'azure')) {
+    $m = Get-Content -Raw (Join-Path $InfraRoot "modules\$cloud\investigation-host\main.tf")
+    $v = Get-Content -Raw (Join-Path $InfraRoot "modules\$cloud\investigation-host\variables.tf")
+    Test-Item "$cloud bootstrap ref is a variable, not hardcoded main" `
+        ($m -notmatch 'refs/heads/main\.zip' -and $m -match '\$\{var\.repo_ref\}')
+    Test-Item "$cloud repo_ref defaults to a pinned 40-char commit SHA" `
+        ($v -match 'variable "repo_ref"' -and $v -match 'default\s*=\s*"[0-9a-f]{40}"')
+}
+
+# case_id reaches code that executes as SYSTEM, so Terraform must validate it
+# even when the console is bypassed.
+foreach ($env in @('aws-case', 'azure-case')) {
+    $vars = Get-Content -Raw (Join-Path $InfraRoot "environments\$env\variables.tf")
+    Test-Item "$env validates case_id" `
+        ($vars -match '(?s)variable "case_id".*?validation')
+}
+
+# Evidence integrity tooling exists and is reachable from the console.
+Test-Item 'Evidence manifest script exists' `
+    (Test-Path (Join-Path $PSScriptRoot 'Get-EvidenceManifest.ps1'))
+$manifest = Get-Content -Raw (Join-Path $PSScriptRoot 'Get-EvidenceManifest.ps1')
+Test-Item 'Manifest uses SHA-256, not MD5/SHA-1' `
+    ($manifest -match "Algorithm SHA256" -and $manifest -notmatch "Algorithm MD5")
+Test-Item 'Manifest hashing includes hidden files' ($manifest -match '-Recurse -File -Force')
+$irConsole = Get-Content -Raw (Join-Path $PSScriptRoot 'Start-IRConsole.ps1')
+Test-Item 'IR console exposes the evidence manifest' `
+    ($irConsole -match "Get-EvidenceManifest\.ps1")
+
+# Opt-in audit logging is wired on both clouds.
+$awsStorage = Get-Content -Raw (Join-Path $InfraRoot 'modules\aws\case-storage\main.tf')
+$azStorage = Get-Content -Raw (Join-Path $InfraRoot 'modules\azure\case-storage\main.tf')
+Test-Item 'AWS case storage supports access logging' `
+    ($awsStorage -match 'aws_s3_bucket_logging')
+Test-Item 'Azure case storage supports blob diagnostics' `
+    ($azStorage -match 'azurerm_monitor_diagnostic_setting' -and $azStorage -match 'StorageRead')
+
+# The comment that claimed a control which did not exist.
+Test-Item 'Azure storage comment no longer claims nonexistent network rules' `
+    ($azStorage -notmatch 'network\s*\n?\s*#?\s*rules below')
+
+# ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host ("-" * 60)
 if ($script:Fail -eq 0) {

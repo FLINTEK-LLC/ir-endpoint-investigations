@@ -392,6 +392,8 @@ scripts/
   Get-EvtxTriage.ps1         Fast triage: curated Event IDs within a date window
   Get-BroaderBrowserHistory.ps1  Fast triage: NirSoft browser history/downloads for
                               non-Chromium browsers, against the raw uploads\ tree
+  Get-EvidenceManifest.ps1   Writes/verifies a SHA-256 manifest of a collection -
+                              hash on arrival, verify whenever it matters
   IRPrompt.ps1               Shared console prompts for both menus - arrow-key
                               selection, highlighted defaults, and the numbered
                               fallback for hosts without raw key input

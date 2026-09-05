@@ -5,6 +5,7 @@ data "aws_ssm_parameter" "windows_ami" {
 }
 
 data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
 
 locals {
   # Derived once so both the "fetch the tiny bootstrapper" URL and the "repo
@@ -12,7 +13,7 @@ locals {
   # override just case_repo_git_url and both follow.
   repo_base_https = trimsuffix(var.case_repo_git_url, ".git")
   repo_raw_base   = replace(local.repo_base_https, "github.com", "raw.githubusercontent.com")
-  repo_zip_url    = "${local.repo_base_https}/archive/refs/heads/main.zip"
+  repo_zip_url    = "${local.repo_base_https}/archive/${var.repo_ref}.zip"
 }
 
 # --- IAM: instance role scoped to exactly this case's bucket, nothing else ---
@@ -83,6 +84,49 @@ resource "aws_iam_role_policy" "tools_bucket_read" {
   })
 }
 
+# The interactive account's password lives in Parameter Store, not in
+# user_data. EC2 user_data is readable by ANY process on the instance through
+# the instance metadata service, with no credentials required - and this host
+# exists to run third-party parsers over attacker-controlled evidence. A parser
+# bug on hostile input should not also hand over the box's local admin
+# password. SecureString keeps it encrypted at rest and behind IAM.
+resource "aws_ssm_parameter" "admin_password" {
+  name        = "/ir-case/${var.case_id}/admin-password"
+  description = "Local ${var.admin_username} password for case ${var.case_id}"
+  type        = "SecureString"
+  value       = var.admin_password
+  tags        = var.tags
+}
+
+# Read access to exactly this case's parameter, nothing else. kms:Decrypt is
+# scoped by ViaService so the role cannot use the SSM key for anything but
+# Parameter Store.
+resource "aws_iam_role_policy" "admin_password_read" {
+  name = "ir-case-${var.case_id}-admin-password-read"
+  role = aws_iam_role.host.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = [aws_ssm_parameter.admin_password.arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = ["arn:aws:kms:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alias/aws/ssm"]
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${data.aws_region.current.name}.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "host" {
   name = "ir-case-${var.case_id}-host"
   role = aws_iam_role.host.name
@@ -127,16 +171,30 @@ resource "aws_instance" "host" {
     # survive the instance being destroyed.
   }
 
+  # IMDSv2 required. With IMDSv1 a single unauthenticated GET from anything
+  # running on the box reads the whole metadata tree; requiring a token turns
+  # that into a PUT-then-GET, which most SSRF-style bugs in a parser cannot
+  # perform. hop_limit 1 stops a container on the host from reaching it at all.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+    instance_metadata_tags      = "disabled"
+  }
+
+  # NOTE: admin_password is deliberately NOT passed here. It goes to Parameter
+  # Store above and the instance fetches it with its own role at first boot.
   user_data = templatefile("${path.module}/user_data.ps1.tftpl", {
-    fetch_script_url = "${local.repo_raw_base}/main/infra/scripts/fetch-and-bootstrap.ps1"
-    repo_zip_url     = local.repo_zip_url
-    case_id          = var.case_id
-    bucket_name      = var.bucket_name
-    region           = data.aws_region.current.name
-    admin_password   = var.admin_password
-    tools_bucket     = var.tools_bucket_name
-    tools_zip_url    = var.tools_zip_url
-    timezone_id      = var.timezone_id
+    fetch_script_url    = "${local.repo_raw_base}/${var.repo_ref}/infra/scripts/fetch-and-bootstrap.ps1"
+    repo_zip_url        = local.repo_zip_url
+    case_id             = var.case_id
+    bucket_name         = var.bucket_name
+    region              = data.aws_region.current.name
+    admin_username      = var.admin_username
+    admin_password_path = aws_ssm_parameter.admin_password.name
+    tools_bucket        = var.tools_bucket_name
+    tools_zip_url       = var.tools_zip_url
+    timezone_id         = var.timezone_id
   })
 
   tags = merge(var.tags, {

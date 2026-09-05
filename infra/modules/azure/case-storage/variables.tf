@@ -46,3 +46,21 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "diagnostic_workspace_id" {
+  description = <<-EOT
+    OPTIONAL Log Analytics workspace resource ID to send blob data-plane
+    diagnostics to. Empty (the default) means no diagnostic logging.
+
+    Blob versioning and the immutability policy protect the evidence from
+    being changed; they do not record who read it. StorageRead/StorageWrite/
+    StorageDelete on the blob service is what answers that, and it has to be
+    enabled before the access happens.
+
+    Off by default because it requires a workspace that outlives the case -
+    sending a case's audit trail to a workspace destroyed with the case would
+    be pointless.
+  EOT
+  type        = string
+  default     = ""
+}

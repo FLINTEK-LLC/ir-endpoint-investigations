@@ -28,6 +28,7 @@ module "case_storage" {
   retention_days      = var.retention_days
   retention_mode      = var.retention_mode
   archive_after_days  = var.archive_after_days
+  access_log_bucket   = var.access_log_bucket
   tags                = local.tags
 }
 
@@ -42,11 +43,14 @@ module "case_role" {
 # Generated, never hand-typed into a committed .tfvars file - there is no
 # key pair on this instance (SSM Session Manager is the sole connection
 # path), so this is set directly via user_data instead of the usual
-# key-pair-encrypted GetPasswordData flow. override_special deliberately
-# excludes quote/backtick/dollar-sign/backslash: the investigation-host
-# module embeds this literally inside a double-quoted PowerShell string in
-# user_data.ps1.tftpl, and any of those characters would either break that
-# string outright or trigger unwanted interpolation/escaping.
+# key-pair-encrypted GetPasswordData flow.
+#
+# override_special still excludes quote/backtick/dollar-sign/backslash. The
+# password is no longer embedded in user_data (it goes to SSM Parameter Store
+# and the host fetches it with its own role), but it still transits the AWS
+# CLI and JSON on the way back out, so keeping the character set boring avoids
+# a whole class of quoting problems for no practical loss of entropy at 24
+# characters.
 resource "random_password" "admin" {
   length           = 24
   special          = true
@@ -57,6 +61,7 @@ resource "random_password" "admin" {
   min_special      = 2
 }
 
+# (case_storage is configured above; access logging is opt-in.)
 module "investigation_host" {
   source = "../../modules/aws/investigation-host"
 

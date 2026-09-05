@@ -36,13 +36,21 @@ resource "azurerm_storage_account" "case" {
   # below is the actual long-term durability story.
   account_kind = "StorageV2"
 
-  min_tls_version               = "TLS1_2"
-  https_traffic_only_enabled    = true
-  public_network_access_enabled = true # Storage account itself must be reachable for
-  # the collector's SAS-based upload and the
-  # investigation host's mount - access is scoped
-  # by the container-level SAS token and network
-  # rules below, not by blocking the account outright.
+  min_tls_version            = "TLS1_2"
+  https_traffic_only_enabled = true
+  # Reachable from the public internet, because the collector uploads from
+  # wherever the compromised endpoint is and the investigation host mounts
+  # over the public endpoint. Access is gated by Entra ID RBAC and the
+  # collector's short-lived user-delegation SAS - NOT by any network
+  # restriction. There are deliberately no network_rules here: locking the
+  # data plane to a VNet or IP range would break collector uploads from
+  # arbitrary networks, which is the whole point of an offline collector.
+  #
+  # If your collectors only ever run inside known networks, adding a
+  # network_rules block with default_action = "Deny" plus explicit
+  # ip_rules/virtual_network_subnet_ids is a real hardening win. It is not
+  # the default because it cannot be made to fit every deployment.
+  public_network_access_enabled   = true
   allow_nested_items_to_be_public = false
 
   # NOTE: this is NOT required by the collector's upload SAS.
@@ -109,5 +117,26 @@ resource "azurerm_storage_management_policy" "case" {
         tier_to_archive_after_days_since_modification_greater_than = var.archive_after_days
       }
     }
+  }
+}
+
+# Off unless diagnostic_workspace_id is set - see that variable for why.
+# Scoped to the blob service, not the account: the account-level resource
+# emits control-plane events, and the question here is who touched the data.
+resource "azurerm_monitor_diagnostic_setting" "case_blob" {
+  count = var.diagnostic_workspace_id == "" ? 0 : 1
+
+  name                       = "ir-case-${var.case_id}-blob-audit"
+  target_resource_id         = "${azurerm_storage_account.case.id}/blobServices/default"
+  log_analytics_workspace_id = var.diagnostic_workspace_id
+
+  enabled_log {
+    category = "StorageRead"
+  }
+  enabled_log {
+    category = "StorageWrite"
+  }
+  enabled_log {
+    category = "StorageDelete"
   }
 }

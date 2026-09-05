@@ -26,13 +26,14 @@ locals {
 module "case_storage" {
   source = "../../modules/azure/case-storage"
 
-  case_id             = var.case_id
-  location            = var.location
-  enable_immutability = var.enable_immutability
-  retention_days      = var.retention_days
-  retention_mode      = var.retention_mode
-  archive_after_days  = var.archive_after_days
-  tags                = local.tags
+  case_id                 = var.case_id
+  location                = var.location
+  enable_immutability     = var.enable_immutability
+  retention_days          = var.retention_days
+  retention_mode          = var.retention_mode
+  archive_after_days      = var.archive_after_days
+  diagnostic_workspace_id = var.diagnostic_workspace_id
+  tags                    = local.tags
 }
 
 # Generated, never hand-typed into a committed .tfvars file. This IS the

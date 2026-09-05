@@ -162,6 +162,9 @@ if ($CloudProvider -eq 'AWS') {
     $instanceId = $tfOut.instance_id
     $region = $tfOut.region
     $adminPassword = $tfOut.admin_password
+    # Falls back to the built-in name only for hosts created before this module
+    # switched to a dedicated account, whose state has no admin_username output.
+    $adminUsername = if ($tfOut.admin_username) { $tfOut.admin_username } else { 'Administrator' }
     # Both are checked, not just the instance: an empty --region reaches the
     # CLI as a flag with no value and fails with exit code 252 - the same
     # "invalid parameters" code a malformed --parameters gives, which makes
@@ -249,11 +252,11 @@ if ($CloudProvider -eq 'AWS') {
     Write-Host "Launching Remote Desktop against localhost:$LocalPort ..."
     if ($adminPassword) {
         Write-Host ""
-        Write-Host "Sign in as: Administrator" -ForegroundColor Cyan
+        Write-Host "Sign in as: $adminUsername" -ForegroundColor Cyan
         Write-Host "Password:   $adminPassword" -ForegroundColor Cyan
         Write-Host "(fetched fresh from Terraform state - never stored in infra\.cases\ bookkeeping. Clear your terminal scrollback after signing in if this session is shared/recorded.)" -ForegroundColor DarkGray
     } else {
-        Write-Host "Sign in with the local Administrator account or a domain/AD credential valid on this host - Bastion/SSM only broker the network path, not authentication."
+        Write-Host "Sign in with the local $adminUsername account or a domain/AD credential valid on this host - Bastion/SSM only broker the network path, not authentication."
     }
     Start-Process -FilePath 'mstsc.exe' -ArgumentList "/v:localhost:$LocalPort"
 

@@ -12,6 +12,11 @@ output "instance_id" {
   value       = module.investigation_host.instance_id
 }
 
+output "admin_username" {
+  description = "Local account to sign in as on the investigation host."
+  value       = module.investigation_host.admin_username
+}
+
 output "admin_password" {
   description = "Local Administrator password for RDP login, fetched live by Connect-InvestigationHost.ps1 - sensitive, never written to infra\\.cases\\ bookkeeping (Start-CloudConsole.ps1 strips it before saving a case record)."
   value       = random_password.admin.result

@@ -78,9 +78,40 @@ variable "subnet_id" {
 }
 
 variable "admin_password" {
-  description = "Local Administrator password, generated once by the root module (random_password) and set directly via user_data - this host launches with no EC2 key pair (SSM Session Manager is the sole connection path, so a key pair for the usual GetPasswordData decryption flow would be unused overhead). The root module restricts this to a safe character set (see its own random_password.admin comment) specifically because it gets embedded literally inside a double-quoted PowerShell string in user_data.ps1.tftpl - an unrestricted special character (particularly a literal quote) would break that script outright."
+  description = "Password for the local interactive account, generated once by the root module (random_password). Written to SSM Parameter Store as a SecureString and fetched by the instance at first boot using its own role - NOT embedded in user_data, which any process on the host can read from the metadata service. This host launches with no EC2 key pair, since SSM Session Manager is the sole connection path and a key pair for the usual GetPasswordData flow would be unused overhead."
   type        = string
   sensitive   = true
+}
+
+variable "admin_username" {
+  description = "Local account created for interactive sign-in, added to Administrators. Deliberately NOT the built-in Administrator: a named account keeps the built-in one disabled, makes 4624/4625 logon events on the host attributable to this toolkit rather than blending into a well-known SID, and avoids the automated password-guessing that targets the built-in name."
+  type        = string
+  default     = "iranalyst"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{2,19}$", var.admin_username))
+    error_message = "admin_username must be 3-20 chars, lowercase letters/digits/hyphens, starting with a letter."
+  }
+}
+
+variable "repo_ref" {
+  description = <<-EOT
+    Git ref the investigation host fetches its bootstrap from: a commit SHA
+    (recommended), a tag, or a branch name.
+
+    Defaults to a pinned commit, NOT to "main", on purpose. The host downloads
+    this code at first boot and runs it as SYSTEM, so whatever the ref points
+    at is what executes on a machine that then mounts case evidence. A mutable
+    branch means anyone who can push to it changes that code for every host
+    built afterwards, with nothing to detect it. It also means two hosts built
+    a week apart from identical case settings can run different code, which
+    defeats the point of a reproducible investigation environment.
+
+    Bump this deliberately when you want new hosts to pick up repo changes.
+    A branch name still works if you accept those trade-offs.
+  EOT
+  type        = string
+  default     = "b7f8d5333de7d7d340fb00237af86a26ec564acf"
 }
 
 variable "case_repo_git_url" {

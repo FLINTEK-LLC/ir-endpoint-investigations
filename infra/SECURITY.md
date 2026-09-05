@@ -206,6 +206,85 @@ Every IAM role / managed identity this project creates is scoped to
   "the whole account" - a compromise of one case's credentials (host or
   collector) cannot reach any other case's evidence.
 
+## Evidence integrity: hash on arrival
+
+Versioning and Object Lock make the evidence hard to change. Neither lets you
+say what the bytes *were* when you received them, and that is a different
+question, usually asked much later.
+
+`scripts\Get-EvidenceManifest.ps1` writes a SHA-256 manifest of a collection,
+and verifies one written earlier. Run it when a collection arrives, before
+anything else touches it, and again whenever it matters: after the upload,
+after the download onto an investigation host, before you write up findings.
+It is option `[H]` in the IR console.
+
+SHA-256 rather than MD5 or SHA-1. Both still show up in forensic tooling for
+historical reasons and both have practical collision attacks, and the point of
+this file is to be worth something in an argument.
+
+Verification exits non-zero when anything changed, went missing, or appeared,
+so a scripted caller can act on it. Files added after hashing are reported
+separately from changed ones, because parsing writes its output next to the
+collection and those additions are expected.
+
+## Who read the evidence
+
+Nothing in the default deployment records that. Access logging is opt-in on
+both clouds and off by default, because each needs somewhere durable to log to
+that this project cannot assume exists:
+
+- AWS: set `access_log_bucket` on the case to enable S3 server access logging.
+  It must be a different bucket, and one that outlives the case.
+- Azure: set `diagnostic_workspace_id` to a Log Analytics workspace to capture
+  `StorageRead` / `StorageWrite` / `StorageDelete` on the blob service.
+
+Both have to be enabled *before* the access happens. If you expect ever to
+answer "who pulled this collection, and when", turn them on at the start.
+
+## Pinning what the host actually runs
+
+The investigation host downloads this repo at first boot and runs
+`bootstrap-investigation-host.ps1` as SYSTEM, on a machine that then mounts
+case evidence. Both cloud modules therefore take a `repo_ref` variable that
+defaults to a **pinned commit SHA**, not to `main`.
+
+A mutable branch would mean anyone who can push to it changes what executes on
+every host built afterwards, with nothing to detect it. It would also mean two
+hosts built a week apart from identical case settings can run different code,
+which defeats the purpose of a reproducible environment.
+
+Bump `repo_ref` deliberately when you want new hosts to pick up repo changes.
+
+## The interactive account on AWS
+
+The host creates a named local account (`iranalyst` by default, see
+`admin_username`) rather than enabling the built-in Administrator, and the
+password does **not** travel in EC2 user_data.
+
+That matters more here than on a normal server. user_data is readable by any
+process on the instance through the metadata service with no credentials at
+all, and this host exists to run third-party parsers over attacker-controlled
+evidence. A parser bug on hostile input should not also hand over local admin.
+
+So the password goes to SSM Parameter Store as a SecureString, the instance
+reads it at first boot with its own role (scoped to that one parameter, with
+`kms:Decrypt` restricted by `kms:ViaService`), and it is applied with
+`New-LocalUser` so it never appears on a command line. The instance also
+requires IMDSv2, which turns a bare metadata GET into a PUT-then-GET that most
+SSRF-shaped bugs cannot perform.
+
+If the fetch fails the bootstrap continues and logs it. SSM Session Manager
+does not need a local password, so the host stays reachable; only RDP over the
+tunnel is affected.
+
+**Still true:** Terraform generates the password, so it remains in local state
+in cleartext. `sensitive = true` masks CLI output, not the state file. Treat
+`infra\environments\*\terraform.tfstate.d\` as credential material: keep it
+on an encrypted volume, and let `[D] Delete a case completely` remove the
+workspace when a case closes rather than leaving stale state behind. Making
+state credential-free would mean generating the password on the host and
+never returning it to Terraform, which is a larger change than this pass made.
+
 ## What this project does NOT do
 
 - It does not manage your AWS/Azure account's own IAM/root hygiene (MFA,

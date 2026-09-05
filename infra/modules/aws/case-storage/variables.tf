@@ -41,3 +41,28 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "access_log_bucket" {
+  description = <<-EOT
+    OPTIONAL name of an existing bucket to write S3 server access logs to.
+    Empty (the default) means no access logging.
+
+    Versioning and Object Lock already make this bucket tamper-resistant, but
+    neither records who READ the evidence. If you ever need to answer "who
+    pulled this collection, and when", that answer has to be written down at
+    the time; it cannot be reconstructed afterwards.
+
+    Off by default because it needs a second bucket with a log-delivery policy
+    already in place, which not every deployment will have, and because the
+    log bucket must NOT be this bucket (S3 rejects same-bucket logging that
+    would recurse). Point it at a long-lived audit bucket you control.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "access_log_prefix" {
+  description = "Key prefix for access logs when access_log_bucket is set."
+  type        = string
+  default     = ""
+}

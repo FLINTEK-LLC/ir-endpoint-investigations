@@ -122,3 +122,12 @@ resource "aws_s3_bucket_lifecycle_configuration" "case" {
 
   depends_on = [aws_s3_bucket_versioning.case]
 }
+
+# Off unless access_log_bucket is set - see that variable for why.
+resource "aws_s3_bucket_logging" "case" {
+  count = var.access_log_bucket == "" ? 0 : 1
+
+  bucket        = aws_s3_bucket.case.id
+  target_bucket = var.access_log_bucket
+  target_prefix = var.access_log_prefix != "" ? var.access_log_prefix : "ir-case-${var.case_id}/"
+}

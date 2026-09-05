@@ -1,8 +1,8 @@
 locals {
   repo_base_https  = trimsuffix(var.case_repo_git_url, ".git")
   repo_raw_base    = replace(local.repo_base_https, "github.com", "raw.githubusercontent.com")
-  fetch_script_url = "${local.repo_raw_base}/main/infra/scripts/fetch-and-bootstrap.ps1"
-  repo_zip_url     = "${local.repo_base_https}/archive/refs/heads/main.zip"
+  fetch_script_url = "${local.repo_raw_base}/${var.repo_ref}/infra/scripts/fetch-and-bootstrap.ps1"
+  repo_zip_url     = "${local.repo_base_https}/archive/${var.repo_ref}.zip"
 }
 
 locals {

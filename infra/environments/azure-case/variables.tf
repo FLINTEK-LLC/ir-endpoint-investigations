@@ -1,6 +1,17 @@
 variable "case_id" {
   description = "Case identifier - names every resource (ir-case-<case_id>)."
   type        = string
+
+  # Same rule Start-CloudConsole.ps1's Read-CaseId enforces, repeated here
+  # because the console is not the only supported entry point - the docs
+  # explicitly invite running terraform directly. case_id is interpolated
+  # into code that executes as SYSTEM on the investigation host (AWS
+  # user_data, Azure commandToExecute), so an unvalidated value is a template
+  # injection vector, not just a naming problem.
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,40}[a-z0-9]$", var.case_id))
+    error_message = "case_id must be 3-42 chars, lowercase letters/digits/hyphens only, and may not start or end with a hyphen."
+  }
 }
 
 variable "location" {
@@ -89,4 +100,10 @@ variable "vm_size" {
   description = "Investigation host VM size."
   type        = string
   default     = "Standard_D4s_v5"
+}
+
+variable "diagnostic_workspace_id" {
+  description = "OPTIONAL Log Analytics workspace resource ID for blob data-plane audit logging on this case's storage. Empty disables it - see the case-storage module variable for the trade-off."
+  type        = string
+  default     = ""
 }

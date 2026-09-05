@@ -70,6 +70,8 @@ $script:MenuItems = @(
     [pscustomobject]@{ Value = '6'; Label = 'Parse a single host collection' }
     [pscustomobject]@{ Value = '7'; Label = 'Parse a case (multiple hosts)' }
     [pscustomobject]@{ Value = '8'; Label = 'Rebuild review workbook/bundle from existing results' }
+    [pscustomobject]@{ Separator = 'Evidence integrity' }
+    [pscustomobject]@{ Value = 'H'; Label = 'Hash a collection / verify it against its manifest' }
     [pscustomobject]@{ Separator = '' }
     [pscustomobject]@{ Value = '9'; Label = 'Change KAPE path' }
     [pscustomobject]@{ Value = 'Q'; Label = 'Quit' }
@@ -155,6 +157,23 @@ while ($true) {
             if ($resultsPath) {
                 Invoke-DeployedScript 'New-ReviewWorkbook.ps1' @('-ResultsPath', $resultsPath)
                 Invoke-DeployedScript 'New-ReviewBundle.ps1' @('-ResultsPath', $resultsPath)
+            } else {
+                Write-Host "Cancelled." -ForegroundColor Yellow
+            }
+            Wait-ForEnter
+        }
+        'H' {
+            # Hash on arrival, verify whenever it matters. See
+            # Get-EvidenceManifest.ps1's header for why this exists.
+            $collection = Read-Required -Prompt "Collection folder or .zip"
+            if ($collection) {
+                $action = Read-Choice -Prompt "What would you like to do?" -Items @(
+                    [pscustomobject]@{ Label = 'Write a manifest (do this when the collection arrives)'; Value = 'write' }
+                    [pscustomobject]@{ Label = 'Verify against an existing manifest'; Value = 'verify' }
+                ) -DisplayProperty Label -ValueProperty Value -Default 'write'
+                $scriptArgs = @('-Path', $collection)
+                if ($action -eq 'verify') { $scriptArgs += '-Verify' }
+                Invoke-DeployedScript 'Get-EvidenceManifest.ps1' $scriptArgs
             } else {
                 Write-Host "Cancelled." -ForegroundColor Yellow
             }

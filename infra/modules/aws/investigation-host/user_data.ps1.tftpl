@@ -1,21 +1,62 @@
 <powershell>
 $ErrorActionPreference = 'Stop'
+$log = 'C:\ir-bootstrap-fetch.log'
+function Write-Boot { param([string]$m) "$(Get-Date -Format 'u')  $m" | Out-File -FilePath $log -Append }
+
 try {
-    # This host launches with no EC2 key pair (SSM Session Manager is the
-    # sole connection path - see the security group's own comment), so the
-    # local Administrator password is set directly here instead of relying
-    # on EC2's key-pair-encrypted GetPasswordData mechanism. Safe to embed
-    # literally in this double-quoted string - the root module's
-    # random_password.admin restricts the character set specifically to
-    # avoid a literal quote (or other PowerShell-significant character)
-    # breaking this line.
-    net user Administrator /active:yes
-    net user Administrator "${admin_password}"
+    # ------------------------------------------------------------------
+    # Interactive account.
+    #
+    # The password is NOT in this file. user_data is readable by any process
+    # on the instance through the metadata service, and this host runs
+    # third-party parsers over attacker-controlled evidence, so a parser bug
+    # on hostile input must not also yield local admin. Instead the password
+    # sits in Parameter Store as a SecureString and is fetched here with the
+    # instance's own role.
+    #
+    # A named account rather than the built-in Administrator: it keeps the
+    # built-in one disabled, and logon events for it are attributable to this
+    # toolkit instead of a well-known SID.
+    # ------------------------------------------------------------------
+    $pw = $null
+    try {
+        $pw = (aws ssm get-parameter --name '${admin_password_path}' --with-decryption --region '${region}' --query 'Parameter.Value' --output text 2>$null)
+        if ($LASTEXITCODE -ne 0) { $pw = $null }
+    } catch { $pw = $null }
+
+    if (-not $pw) {
+        # Fall back to AWS Tools for PowerShell. Which of the two ships on a
+        # given Windows AMI has changed over time, so try both rather than
+        # betting the whole bootstrap on one being present.
+        try {
+            Import-Module AWSPowerShell.NetCore -ErrorAction SilentlyContinue
+            Import-Module AWSPowerShell -ErrorAction SilentlyContinue
+            $pw = (Get-SSMParameter -Name '${admin_password_path}' -WithDecryption $true -Region '${region}').Value
+        } catch { $pw = $null }
+    }
+
+    if ($pw) {
+        # New-LocalUser takes a SecureString, so the password never appears on
+        # a command line the way `net user <name> <password>` would.
+        $sec = ConvertTo-SecureString $pw -AsPlainText -Force
+        if (Get-LocalUser -Name '${admin_username}' -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name '${admin_username}' -Password $sec
+        } else {
+            New-LocalUser -Name '${admin_username}' -Password $sec -FullName 'IR Analyst' -Description 'Interactive account for this case' -PasswordNeverExpires -AccountNeverExpires | Out-Null
+        }
+        Add-LocalGroupMember -Group 'Administrators' -Member '${admin_username}' -ErrorAction SilentlyContinue
+        Remove-Variable pw, sec -ErrorAction SilentlyContinue
+        Write-Boot 'Interactive account ${admin_username} configured'
+    } else {
+        # Not fatal. SSM Session Manager does not need a local password, so the
+        # host stays reachable and useful; only RDP-over-tunnel is affected.
+        Write-Boot 'WARNING: could not read the admin password from Parameter Store - RDP sign-in will not work, use SSM Session Manager'
+    }
 
     Invoke-WebRequest -Uri "${fetch_script_url}" -OutFile 'C:\fetch-and-bootstrap.ps1'
     & 'C:\fetch-and-bootstrap.ps1' -CaseId "${case_id}" -CloudProvider 'AWS' -StorageIdentifier "${bucket_name}" -Region "${region}" -RepoZipUrl "${repo_zip_url}" -ToolsStorageIdentifier "${tools_bucket}" -ToolsZipUrl "${tools_zip_url}" -TimeZoneId "${timezone_id}"
 } catch {
-    $_ | Out-File -FilePath 'C:\ir-bootstrap-fetch.log' -Append
+    $_ | Out-File -FilePath $log -Append
     throw
 }
 </powershell>
