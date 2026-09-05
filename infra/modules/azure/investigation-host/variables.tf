@@ -259,7 +259,7 @@ variable "repo_ref" {
     A branch name still works if you accept those trade-offs.
   EOT
   type        = string
-  default     = "b7f8d5333de7d7d340fb00237af86a26ec564acf"
+  default     = "b6ae41653d3fcc559dd5d92780a846dfe3ce789c"
 }
 
 variable "case_repo_git_url" {
