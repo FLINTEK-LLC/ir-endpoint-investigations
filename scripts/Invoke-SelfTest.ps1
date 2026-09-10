@@ -309,6 +309,61 @@ Test-Item 'Azure case storage supports blob diagnostics' `
 Test-Item 'Azure storage comment no longer claims nonexistent network rules' `
     ($azStorage -notmatch 'network\s*\n?\s*#?\s*rules below')
 
+
+# --- RDP allowlist -----------------------------------------------------
+# The allowlist is the only thing between a case host's public IP and the
+# internet, so its validator gets tested rather than trusted. Loaded by
+# trimming the console at its menu loop, with the IRPrompt dot-source
+# repointed at the real file (the trimmed copy lives elsewhere).
+$consoleSrc = Get-Content -Raw (Join-Path $InfraRoot 'Start-CloudConsole.ps1')
+$cut = $consoleSrc.Substring(0, $consoleSrc.LastIndexOf('while ($true) {'))
+$cut = $cut -replace [regex]::Escape(". (Join-Path (Split-Path -Parent `$InfraRoot) 'scripts\IRPrompt.ps1')"), ". '$(Join-Path $PSScriptRoot 'IRPrompt.ps1')'"
+$consoleStub = Join-Path $env:TEMP "irselftest-console-$PID.ps1"
+Set-Content -LiteralPath $consoleStub -Value $cut -Encoding UTF8
+# The console sets $script:InfraRoot from its OWN location, so dot-sourcing a
+# copy in TEMP silently repoints it there and every later Join-Path in this
+# suite resolves against the wrong directory. Save and restore it.
+$realInfraRoot = $InfraRoot
+try {
+    . $consoleStub
+
+    Test-Item 'Allowlist accepts a bare IP and normalises it to /32' `
+        ((Test-CidrEntry -Entry '203.0.113.4').Cidr -eq '203.0.113.4/32')
+    Test-Item 'Allowlist accepts a /24' `
+        ((Test-CidrEntry -Entry '198.51.100.0/24').Ok -eq $true)
+    Test-Item 'Allowlist REFUSES 0.0.0.0/0' `
+        ((Test-CidrEntry -Entry '0.0.0.0/0').Ok -eq $false)
+    Test-Item 'Allowlist refuses any /0' `
+        ((Test-CidrEntry -Entry '1.2.3.4/0').Ok -eq $false)
+    Test-Item 'Allowlist refuses an out-of-range octet' `
+        ((Test-CidrEntry -Entry '999.1.1.1').Ok -eq $false)
+    Test-Item 'Allowlist refuses an out-of-range prefix' `
+        ((Test-CidrEntry -Entry '10.0.0.1/33').Ok -eq $false)
+    Test-Item 'Allowlist refuses shell-shaped input' `
+        ((Test-CidrEntry -Entry '10.0.0.1; rm -rf').Ok -eq $false)
+    Test-Item 'Allowlist refuses IPv6 rather than half-accepting it' `
+        ((Test-CidrEntry -Entry '2001:db8::1').Ok -eq $false)
+    Test-Item 'Ranges wider than /24 require confirmation' `
+        ((Test-CidrEntry -Entry '10.0.0.0/8').NeedsConfirm -eq $true)
+    Test-Item 'A /24 does not require confirmation' `
+        ((Test-CidrEntry -Entry '198.51.100.0/24').NeedsConfirm -eq $false)
+} finally {
+    Remove-Item -LiteralPath $consoleStub -Force -ErrorAction SilentlyContinue
+    $InfraRoot = $realInfraRoot
+}
+
+# Connect-InvestigationHost must validate -AllowFrom too: it bypasses the
+# console entirely, and a /0 there would be just as wide open.
+$connectSrc = Get-Content -Raw (Join-Path $InfraRoot 'scripts\Connect-InvestigationHost.ps1')
+Test-Item 'Connect script validates -AllowFrom' `
+    ($connectSrc -match 'is not an IPv4 address or CIDR')
+Test-Item 'Connect script refuses an -AllowFrom /0' `
+    ($connectSrc -match "match '/0\`$'")
+Test-Item 'Connect script sends the whole prefix set to the NSG rule' `
+    ($connectSrc -match '--source-address-prefixes @prefixes')
+Test-Item 'Connect script no longer hardcodes a single source' `
+    ($connectSrc -notmatch '--source-address-prefixes "\$myIp/32"')
+
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host ("-" * 60)

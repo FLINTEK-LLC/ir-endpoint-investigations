@@ -206,6 +206,38 @@ Every IAM role / managed identity this project creates is scoped to
   "the whole account" - a compromise of one case's credentials (host or
   collector) cannot reach any other case's evidence.
 
+## Who may reach an Azure case host
+
+Only the Azure `rdp-allowlist` access method has anything to allow. AWS
+connects through SSM Session Manager, which opens no inbound port, and the
+Azure `bastion` method gives the VM no public IP at all.
+
+For that one path, `[A] Manage the RDP allowlist` in the console keeps a list
+of addresses and ranges alongside the other shared prerequisites. When you
+connect, the just-in-time NSG rule is built from that list **plus** the
+address you happen to be connecting from, and torn down again when the
+session ends. The list is shared rather than per-case on purpose: who needs
+to reach an investigation host is a property of the team, and re-entering
+everyone's address per case is how entries get missed.
+
+`Connect-InvestigationHost.ps1 -AllowFrom <cidr>` adds a source for one
+session without saving it.
+
+Two guardrails, because this list is the only thing between a public IP and
+the internet:
+
+- `0.0.0.0/0`, and any `/0`, is refused outright. There is no legitimate
+  reason to let the whole internet RDP to a host holding evidence.
+- Anything broader than a `/24` has to be confirmed. Widening the range to
+  get connected is a normal impulse and a bad habit.
+
+Both checks run in the console and again in `Connect-InvestigationHost.ps1`,
+because `-AllowFrom` bypasses the console.
+
+An entry in the list is not access on its own. The rule only exists while a
+session is open, and everything in it still needs a valid local credential on
+the host.
+
 ## Evidence integrity: hash on arrival
 
 Versioning and Object Lock make the evidence hard to change. Neither lets you

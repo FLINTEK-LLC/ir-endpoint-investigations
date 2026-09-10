@@ -225,6 +225,10 @@ and both are menu options rather than commands to hand-type:
   whether or not anyone connects, which is why destroying it is a
   first-class action rather than a footnote.
 - **`[P]`** prints what `[8]`/`[9]` recorded.
+- **`[A] Manage the RDP allowlist`** keeps the list of addresses and
+  ranges allowed to reach an Azure case host, so more than one analyst
+  (or one analyst from more than one location) can connect. See
+  [SECURITY.md](SECURITY.md) for the guardrails on it.
 
 What they recorded is saved to `infra\.prereqs.json` (gitignored,
 bookkeeping only - never credentials, same rule as `infra\.cases\`) and

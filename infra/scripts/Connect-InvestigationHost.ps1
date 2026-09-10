@@ -76,6 +76,10 @@ param(
 
     [switch]$KeepOpen,
 
+    # Extra sources to allow for this session only, on top of the saved
+    # allowlist and the address you are connecting from. Not persisted.
+    [string[]]$AllowFrom = @(),
+
     [switch]$CloseOnly,
 
     # Distinctive so it is obvious in the portal what created it, and so
@@ -291,6 +295,42 @@ if ($CloudProvider -eq 'AWS') {
             return
         }
 
+        # Resolve every source that should be allowed for this session: the saved
+        # team allowlist, anything passed with -AllowFrom, and this machine's own
+        # address. Deduplicated, because Azure rejects a rule with repeated
+        # prefixes.
+        $allowed = New-Object System.Collections.Generic.List[string]
+
+        $prereqPath = Join-Path $InfraRoot '.prereqs.json'
+        if (Test-Path -LiteralPath $prereqPath) {
+            try {
+                $prereqs = Get-Content -Raw -LiteralPath $prereqPath | ConvertFrom-Json
+                if ($prereqs.Azure -and $prereqs.Azure.rdp_allowlist) {
+                    foreach ($e in @($prereqs.Azure.rdp_allowlist | Where-Object { $_ -and $_.Cidr })) {
+                        $allowed.Add([string]$e.Cidr) | Out-Null
+                        Write-Host "  allowlist: $($e.Cidr)  $($e.Label)" -ForegroundColor DarkGray
+                    }
+                }
+            } catch {
+                Write-Host "Could not read the saved allowlist at $prereqPath - continuing with your own IP only." -ForegroundColor Yellow
+            }
+        }
+
+        foreach ($extra in @($AllowFrom | Where-Object { $_ })) {
+            # Same validation the console applies, repeated here because
+            # -AllowFrom bypasses the console entirely.
+            $v = ($extra -replace '\s', '')
+            if ($v -match '^(\d{1,3}(?:\.\d{1,3}){3})$') { $v = "$v/32" }
+            if ($v -notmatch '^\d{1,3}(?:\.\d{1,3}){3}/\d{1,2}$') {
+                throw "-AllowFrom value '$extra' is not an IPv4 address or CIDR."
+            }
+            if ($v -match '/0$') {
+                throw "-AllowFrom '$extra' would allow the entire internet to reach RDP on this host. Refused."
+            }
+            $allowed.Add($v) | Out-Null
+            Write-Host "  -AllowFrom: $v" -ForegroundColor DarkGray
+        }
+
         # Just-in-time access. The NSG carries no allow rules of its own, so
         # Azure's built-in DenyAllInBound (priority 65500) blocks everything.
         # This adds ONE rule permitting 3389 from this machine's current public
@@ -307,23 +347,31 @@ if ($CloudProvider -eq 'AWS') {
                 if ($candidate -match '^\d{1,3}(\.\d{1,3}){3}$') { $myIp = $candidate; break }
             } catch { }
         }
-        if (-not $myIp) {
-            throw "Could not determine this machine's public IP from any lookup service. Open the port by hand, then re-run with -SkipJit:`n  az network nsg rule create -g $resourceGroup --nsg-name $nsgName -n $JitRuleName --priority 100 --access Allow --protocol Tcp --direction Inbound --destination-port-ranges 3389 --source-address-prefixes <your-ip>/32"
+        if ($myIp) {
+            $allowed.Add("$myIp/32") | Out-Null
+            Write-Host "  this machine: $myIp/32" -ForegroundColor DarkGray
+        } elseif ($allowed.Count -eq 0) {
+            throw "Could not determine this machine's public IP from any lookup service, and the allowlist is empty. Add an entry with option [A] in Start-CloudConsole.ps1, pass -AllowFrom <cidr>, or open the port by hand and re-run with -SkipJit:`n  az network nsg rule create -g $resourceGroup --nsg-name $nsgName -n $JitRuleName --priority 100 --access Allow --protocol Tcp --direction Inbound --destination-port-ranges 3389 --source-address-prefixes <your-ip>/32"
+        } else {
+            Write-Host "Could not determine this machine's public IP - using the allowlist only. If you cannot connect, that is why." -ForegroundColor Yellow
         }
-        Write-Host "Your public IP is $myIp - opening RDP to $myIp/32 only." -ForegroundColor Cyan
+
+        $prefixes = @($allowed | Select-Object -Unique)
+        Write-Host ""
+        Write-Host "Opening RDP to $($prefixes.Count) source(s)." -ForegroundColor Cyan
 
         # create fails if the rule already exists (e.g. a previous session left
         # it, or your IP changed) - fall back to updating it rather than dying.
         & az network nsg rule create `
             --resource-group $resourceGroup --nsg-name $nsgName --name $JitRuleName `
             --priority 100 --access Allow --protocol Tcp --direction Inbound `
-            --destination-port-ranges 3389 --source-address-prefixes "$myIp/32" `
+            --destination-port-ranges 3389 --source-address-prefixes @prefixes `
             --output none
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "Rule '$JitRuleName' already present - updating it to your current IP..." -ForegroundColor DarkGray
+            Write-Host "Rule '$JitRuleName' already present - updating it to the current source list..." -ForegroundColor DarkGray
             & az network nsg rule update `
                 --resource-group $resourceGroup --nsg-name $nsgName --name $JitRuleName `
-                --source-address-prefixes "$myIp/32" --output none
+                --source-address-prefixes @prefixes --output none
             if ($LASTEXITCODE -ne 0) {
                 throw "Could not create or update the JIT RDP rule on NSG '$nsgName' in resource group '$resourceGroup'. Confirm 'az login' is active and your account can modify this NSG."
             }
@@ -334,10 +382,10 @@ if ($CloudProvider -eq 'AWS') {
 
         Write-Host ""
         if ($KeepOpen) {
-            Write-Host "RDP left OPEN to $myIp/32 (-KeepOpen). Close it when finished with:" -ForegroundColor Yellow
+            Write-Host "RDP left OPEN to $($prefixes -join ', ') (-KeepOpen). Close it when finished with:" -ForegroundColor Yellow
             Write-Host "  .\Connect-InvestigationHost.ps1 -CaseId $CaseId -CloudProvider Azure -CloseOnly" -ForegroundColor Yellow
         } else {
-            Write-Host "RDP open to $myIp/32. Waiting for the Remote Desktop window to close, then locking it back down..." -ForegroundColor DarkGray
+            Write-Host "RDP open to $($prefixes -join ', '). Waiting for the Remote Desktop window to close, then locking it back down..." -ForegroundColor DarkGray
             if ($rdp) { $rdp.WaitForExit() }
             Remove-JitRule -ResourceGroup $resourceGroup -NsgName $nsgName
         }

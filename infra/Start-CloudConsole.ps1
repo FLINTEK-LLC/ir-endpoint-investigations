@@ -1395,6 +1395,179 @@ function Invoke-ToolsStorageMenu {
     }
 }
 
+
+# ---------------------------------------------------------------------------
+# RDP allowlist
+#
+# Only the Azure rdp-allowlist access method uses this. AWS reaches the host
+# through SSM Session Manager, which opens no inbound port at all, and the
+# Azure bastion method gives the VM no public IP - neither has anything to
+# allow.
+#
+# Stored alongside the other shared prerequisites rather than per case: the
+# people who need to reach an investigation host are a property of the team,
+# not of the case, and re-entering everyone's address per case is how entries
+# get skipped.
+# ---------------------------------------------------------------------------
+
+function Test-CidrEntry {
+    <#
+        Validates one allowlist entry and normalises it to CIDR.
+
+        A bare address becomes /32. Anything that is not a well-formed IPv4
+        CIDR is rejected outright, and anything broader than /24 has to be
+        confirmed - this list is the only thing between a public IP and the
+        internet, and "I'll just widen it to get connected" is exactly how an
+        investigation host ends up exposed. 0.0.0.0/0 is refused entirely;
+        there is no legitimate reason to allow the whole internet to RDP to a
+        box holding evidence.
+    #>
+    param([string]$Entry)
+
+    $result = @{ Ok = $false; Cidr = $null; Reason = $null; NeedsConfirm = $false }
+    $e = ($Entry -replace '\s', '')
+    if (-not $e) { $result.Reason = 'empty'; return $result }
+
+    if ($e -match '^(\d{1,3}(?:\.\d{1,3}){3})$') { $e = "$e/32" }
+    if ($e -notmatch '^(\d{1,3}(?:\.\d{1,3}){3})/(\d{1,2})$') {
+        $result.Reason = "not an IPv4 address or CIDR (expected 203.0.113.4 or 198.51.100.0/24)"
+        return $result
+    }
+
+    $addr = $Matches[1]
+    $bits = [int]$Matches[2]
+    foreach ($octet in $addr.Split('.')) {
+        if ([int]$octet -gt 255) { $result.Reason = "octet $octet is out of range"; return $result }
+    }
+    if ($bits -gt 32) { $result.Reason = "prefix /$bits is out of range"; return $result }
+
+    if ($bits -eq 0) {
+        $result.Reason = '0.0.0.0/0 would allow RDP from the entire internet - refused'
+        return $result
+    }
+
+    $result.Ok = $true
+    $result.Cidr = "$addr/$bits"
+    # /24 is 256 addresses, about the size of one office egress range. Wider
+    # than that is worth a second look.
+    if ($bits -lt 24) { $result.NeedsConfirm = $true }
+    return $result
+}
+
+function Get-RdpAllowlist {
+    $saved = Get-Prereqs -Cloud 'Azure'
+    if (-not $saved.ContainsKey('rdp_allowlist')) { return @() }
+    $items = @()
+    foreach ($e in @($saved['rdp_allowlist'] | Where-Object { $_ })) {
+        $items += [pscustomobject]@{
+            Label = [string]$e.Label
+            Cidr  = [string]$e.Cidr
+        }
+    }
+    Write-Output -NoEnumerate $items
+}
+
+function Save-RdpAllowlist {
+    param([object[]]$Entries)
+    Save-Prereq -Cloud 'Azure' -Values @{
+        rdp_allowlist = @($Entries | ForEach-Object { @{ Label = $_.Label; Cidr = $_.Cidr } })
+    }
+}
+
+function Get-MyPublicIp {
+    # Same lookup Connect-InvestigationHost.ps1 uses. The regex check matters:
+    # the response comes from a third party, and it is about to become a
+    # firewall rule.
+    foreach ($svc in 'https://api.ipify.org', 'https://ifconfig.me/ip', 'https://icanhazip.com') {
+        try {
+            $candidate = (Invoke-RestMethod -Uri $svc -TimeoutSec 10 | Out-String).Trim()
+            if ($candidate -match '^\d{1,3}(\.\d{1,3}){3}$') { return $candidate }
+        } catch { }
+    }
+    return $null
+}
+
+function Show-RdpAllowlist {
+    $entries = Get-RdpAllowlist
+    if ($entries.Count -eq 0) {
+        Write-Host "The allowlist is empty. [4] Connect will still open RDP to whichever" -ForegroundColor Yellow
+        Write-Host "machine you connect from, so an empty list is fine for a single operator." -ForegroundColor Yellow
+        return
+    }
+    Write-Host ""
+    Write-Host "Allowed sources for just-in-time RDP:" -ForegroundColor Cyan
+    $i = 0
+    foreach ($e in $entries) {
+        $i++
+        Write-Host ("  {0,2}. {1,-20} {2}" -f $i, $e.Cidr, $e.Label)
+    }
+    Write-Host ""
+    Write-Host "These are added to the NSG rule alongside the address you connect from," -ForegroundColor DarkGray
+    Write-Host "and removed again when the session closes." -ForegroundColor DarkGray
+}
+
+function Invoke-AllowlistMenu {
+    while ($true) {
+        Show-RdpAllowlist
+        Write-Host ""
+        $action = Read-Choice -Prompt 'RDP allowlist:' -Items @(
+            [pscustomobject]@{ Label = 'Add an address or range'; Value = 'add' }
+            [pscustomobject]@{ Label = 'Add the machine I am on right now'; Value = 'addme' }
+            [pscustomobject]@{ Label = 'Remove an entry'; Value = 'remove' }
+            [pscustomobject]@{ Label = 'Done'; Value = 'done' }
+        ) -DisplayProperty Label -ValueProperty Value -Default 'done'
+
+        if (-not $action -or $action -eq 'done') { return }
+
+        $entries = @(Get-RdpAllowlist)
+
+        if ($action -eq 'remove') {
+            if ($entries.Count -eq 0) { Write-Host "Nothing to remove." -ForegroundColor Yellow; continue }
+            $pick = Read-Choice -Prompt 'Remove which entry?' -Items ($entries | ForEach-Object {
+                    [pscustomobject]@{ Label = ('{0,-20} {1}' -f $_.Cidr, $_.Label); Value = $_.Cidr }
+                }) -DisplayProperty Label -ValueProperty Value
+            if (-not $pick) { continue }
+            Save-RdpAllowlist -Entries @($entries | Where-Object { $_.Cidr -ne $pick })
+            Write-Host "Removed $pick." -ForegroundColor Green
+            continue
+        }
+
+        $cidr = $null
+        if ($action -eq 'addme') {
+            Write-Host "Detecting this machine's public IP..."
+            $ip = Get-MyPublicIp
+            if (-not $ip) { Write-Host "Could not determine it - add the address by hand instead." -ForegroundColor Red; continue }
+            $cidr = "$ip/32"
+            Write-Host "This machine is $ip." -ForegroundColor Cyan
+        } else {
+            $raw = Read-Required -Prompt "Address or CIDR (e.g. 203.0.113.4 or 198.51.100.0/24)"
+            if (-not $raw) { continue }
+            $check = Test-CidrEntry -Entry $raw
+            if (-not $check.Ok) {
+                Write-Host "Rejected: $($check.Reason)" -ForegroundColor Red
+                continue
+            }
+            if ($check.NeedsConfirm) {
+                Write-Host ""
+                Write-Host "$($check.Cidr) is wider than a /24. Everything in that range will be able" -ForegroundColor Yellow
+                Write-Host "to reach RDP on this case's host while a session is open." -ForegroundColor Yellow
+                if (-not (Read-YesNo -Prompt "Add it anyway?" -Default $false)) { continue }
+            }
+            $cidr = $check.Cidr
+        }
+
+        if ($entries | Where-Object { $_.Cidr -eq $cidr }) {
+            Write-Host "$cidr is already on the list." -ForegroundColor Yellow
+            continue
+        }
+
+        $label = Read-Default -Prompt "Label (who or where this is)" -Default $(if ($action -eq 'addme') { "$env:USERNAME on $env:COMPUTERNAME" } else { '' })
+        if (-not $label) { $label = 'unlabelled' }
+        Save-RdpAllowlist -Entries (@($entries) + [pscustomobject]@{ Label = $label; Cidr = $cidr })
+        Write-Host "Added $cidr ($label)." -ForegroundColor Green
+    }
+}
+
 # ---------------------------------------------------------------------------
 # [B] Azure shared Bastion - the existing deploy/destroy pair, behind one entry
 # ---------------------------------------------------------------------------
@@ -1558,6 +1731,7 @@ $script:MenuItems = @(
     [pscustomobject]@{ Separator = 'Teardown and cost' }
     [pscustomobject]@{ Value = 'C'; Label = 'Check what is still billing (AWS/Azure)' }
     [pscustomobject]@{ Value = 'D'; Label = 'Delete a case completely (host AND evidence - irreversible)' }
+    [pscustomobject]@{ Value = 'A'; Label = 'Manage the RDP allowlist (who may reach an Azure case host)' }
     [pscustomobject]@{ Value = 'L'; Label = "Lock down a case's RDP now (remove its just-in-time rule)" }
     [pscustomobject]@{ Value = 'Q'; Label = 'Quit' }
 )
@@ -1592,6 +1766,7 @@ while ($true) {
         'P' { Show-Prereqs; Wait-ForEnter }
         'C' { Invoke-CostCheck; Wait-ForEnter }
         'D' { Invoke-DeleteCaseCompletely; Wait-ForEnter }
+        'A' { Invoke-AllowlistMenu; Wait-ForEnter }
         'L' { Invoke-LockDownCase; Wait-ForEnter }
         { $_ -in @('Q', 'QUIT', 'EXIT') } { return }
         default {
