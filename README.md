@@ -326,6 +326,21 @@ collector produces beyond "point me at the right starting folder" - which is
 exactly why `-CollectionRoot\uploads` works as a single, fixed source
 directory for the whole run.
 
+## Tracking the case itself
+
+The scripts handle artifacts. For the case around them there's a blank
+workbook at
+[`templates/IR_Investigation_Template.xlsx`](templates/IR_Investigation_Template.xlsx):
+master timeline with MITRE ATT&CK per row, IOC tracker, account inventory,
+Entra/M365 sign-in and mailbox-change analysis, chain-of-custody evidence log,
+financial impact, a ~68-item remediation checklist, and a notification tracker
+with deadlines. Copy it per case; see
+[`templates/README.md`](templates/README.md) for what each sheet covers and
+its known limits.
+
+Every dropdown reads a named range over the `Lists` sheet, so adding a value
+there updates the dropdown everywhere it appears.
+
 ## Case-level / multi-host use
 
 `Run-IRParse.ps1` handles one host at a time. For an engagement spanning
@@ -408,6 +423,12 @@ scripts/
                               instead of merged - no Excel required, always runs
   Start-CaseParse.ps1        Runs Run-IRParse.ps1 across every host under one case
                               folder, then rolls up fast-triage output across hosts
+templates/
+  IR_Investigation_Template.xlsx  Blank case-tracking workbook: timeline, IOCs,
+                              accounts, sign-ins, evidence log, financial impact,
+                              remediation checklist. Copy it per case
+  README.md                  What each sheet is for, and how the Evidence Log
+                              lines up with Get-EvidenceManifest.ps1
 velociraptor/
   README.md                  Recommended live-state Velociraptor artifacts to
                               collect alongside file-collection (netstat/pslist/
