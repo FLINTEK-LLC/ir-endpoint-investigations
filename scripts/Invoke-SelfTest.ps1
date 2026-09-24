@@ -365,6 +365,101 @@ Test-Item 'Connect script no longer hardcodes a single source' `
     ($connectSrc -notmatch '--source-address-prefixes "\$myIp/32"')
 
 # ---------------------------------------------------------------------------
+Write-Section "6. Case-tracking template"
+
+# Read the xlsx as a zip and inspect its XML directly rather than through
+# ImportExcel. The self-test must run with no modules installed, and these are
+# structural invariants that a malformed edit would break - an Excel Table
+# whose declared column count disagrees with its ref is the specific defect
+# that makes Excel offer to "repair" the file on open, discarding the tables.
+$templatePath = Join-Path $RepoRoot 'templates\IR_Investigation_Template.xlsx'
+Test-Item 'Case-tracking template is present' (Test-Path $templatePath)
+
+if (Test-Path $templatePath) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($templatePath)
+    try {
+        $tableParts = @($zip.Entries | Where-Object { $_.FullName -like 'xl/tables/*.xml' })
+        Test-Item 'Template defines Excel Tables so appended rows stay in range' `
+            ($tableParts.Count -ge 11) -Detail "found $($tableParts.Count)"
+
+        $names = @()
+        $badCols = @()
+        foreach ($e in $tableParts) {
+            $sr = New-Object System.IO.StreamReader($e.Open())
+            try { $xml = [xml]$sr.ReadToEnd() } finally { $sr.Dispose() }
+            $t = $xml.table
+            $names += $t.displayName
+
+            # ref width must equal both the declared and the actual column
+            # count, or Excel repairs the file and drops the table.
+            $m = [regex]::Match($t.ref, '^([A-Z]+)\d+:([A-Z]+)\d+$')
+            function ColNum([string]$letters) {
+                $n = 0
+                foreach ($ch in $letters.ToCharArray()) { $n = $n * 26 + ([int][char]$ch - 64) }
+                return $n
+            }
+            $width = (ColNum $m.Groups[2].Value) - (ColNum $m.Groups[1].Value) + 1
+            $declared = [int]$t.tableColumns.count
+            $actual = @($t.tableColumns.tableColumn).Count
+            if ($width -ne $declared -or $declared -ne $actual) {
+                $badCols += "$($t.displayName) ref=$($t.ref) width=$width declared=$declared actual=$actual"
+            }
+        }
+        Test-Item 'Every table ref width matches its column count' `
+            ($badCols.Count -eq 0) -Detail ($badCols -join '; ')
+        Test-Item 'The Evidence Log table exists under the name the bridge expects' `
+            ($names -contains 'tblEvidence')
+
+        # The Lists sheet backs every dropdown; protecting it stops a stray
+        # edit silently changing what the whole workbook offers.
+        $protectedSheets = 0
+        foreach ($e in @($zip.Entries | Where-Object { $_.FullName -like 'xl/worksheets/sheet*.xml' })) {
+            $sr = New-Object System.IO.StreamReader($e.Open())
+            try { $txt = $sr.ReadToEnd() } finally { $sr.Dispose() }
+            if ($txt -match '<sheetProtection') { $protectedSheets++ }
+        }
+        Test-Item 'At least one sheet is protected (Lists)' ($protectedSheets -ge 1)
+
+        # Validation was one object per cell, 401 of them on one sheet. Ranged
+        # validation is both smaller and the thing that lets an appended row
+        # keep its dropdown.
+        $maxDv = 0
+        foreach ($e in @($zip.Entries | Where-Object { $_.FullName -like 'xl/worksheets/sheet*.xml' })) {
+            $sr = New-Object System.IO.StreamReader($e.Open())
+            try { $txt = $sr.ReadToEnd() } finally { $sr.Dispose() }
+            $c = ([regex]::Matches($txt, '<dataValidation ')).Count
+            if ($c -gt $maxDv) { $maxDv = $c }
+        }
+        Test-Item 'Validation is ranged, not one object per cell' `
+            ($maxDv -le 20) -Detail "worst sheet has $maxDv dataValidation objects"
+    } finally {
+        $zip.Dispose()
+    }
+}
+
+# The bridge from a manifest into the Evidence Log.
+$bridge = Join-Path $PSScriptRoot 'Add-EvidenceToWorkbook.ps1'
+Test-Item 'Evidence bridge script exists' (Test-Path $bridge)
+if (Test-Path $bridge) {
+    $bsrc = Get-Content -Raw $bridge
+    # .Cells[$r, 2] is a parse error inside a method-call argument and fine
+    # everywhere else, which is the worst way for a bug to behave.
+    Test-Item 'Bridge uses .Cells.Item(), not the bracket indexer' `
+        ($bsrc -notmatch '\.Cells\[[^\]]+,')
+    # Close-ExcelPackage saves by default; -Save is silently taken as a prefix
+    # of -SaveAs and fails asking for an argument.
+    Test-Item 'Bridge does not pass a non-existent -Save switch' `
+        ($bsrc -notmatch 'Close-ExcelPackage[^\r\n]*-Save\b(?!As)')
+    Test-Item 'Bridge defaults to Summary, not a row per file' `
+        ($bsrc -match "\[string\]\`$Mode = 'Summary'")
+    Test-Item 'Bridge skips items already logged by hash' `
+        ($bsrc -match 'existing\.ContainsKey')
+    Test-Item 'Bridge validates CollectionMethod against the Lists sheet' `
+        ($bsrc -match 'CollectionMethod must match the Lists sheet')
+}
+
+# ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host ("-" * 60)
 if ($script:Fail -eq 0) {

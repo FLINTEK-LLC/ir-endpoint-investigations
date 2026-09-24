@@ -339,7 +339,14 @@ with deadlines. Copy it per case; see
 its known limits.
 
 Every dropdown reads a named range over the `Lists` sheet, so adding a value
-there updates the dropdown everywhere it appears.
+there updates the dropdown everywhere it appears, and each data sheet is a real
+Excel Table so appended rows keep their formulas and dropdowns.
+
+The Evidence Log fills itself from a manifest rather than by retyping hashes:
+
+```powershell
+.\scripts\Add-EvidenceToWorkbook.ps1 -ManifestPath <manifest.csv> -WorkbookPath <case.xlsx> -SourceHost HOST01
+```
 
 ## Case-level / multi-host use
 
@@ -409,6 +416,8 @@ scripts/
                               non-Chromium browsers, against the raw uploads\ tree
   Get-EvidenceManifest.ps1   Writes/verifies a SHA-256 manifest of a collection -
                               hash on arrival, verify whenever it matters
+  Add-EvidenceToWorkbook.ps1 Fills a case workbook's Evidence Log from that
+                              manifest, so a SHA-256 is never retyped
   IRPrompt.ps1               Shared console prompts for both menus - arrow-key
                               selection, highlighted defaults, and the numbered
                               fallback for hosts without raw key input

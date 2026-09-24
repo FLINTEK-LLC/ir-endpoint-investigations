@@ -44,19 +44,43 @@ further edits. `L_IncidentType`, `L_ArtifactSource` and friends are the names.
 
 ## Where it meets the rest of the repo
 
-The Evidence Log's `Hash (SHA256)`, `Collected (UTC)` and `Collection Method`
-columns line up with what [`..\scripts\Get-EvidenceManifest.ps1`](../scripts/Get-EvidenceManifest.ps1)
-writes, and `Collection Method` already lists "Velociraptor Offline Collector",
-"KAPE" and "FTK Imager (Disk Image)". Hash a collection on arrival and the
-manifest gives you the evidence rows rather than transcribing them by hand.
+[`..\scripts\Add-EvidenceToWorkbook.ps1`](../scripts/Add-EvidenceToWorkbook.ps1)
+fills the Evidence Log from a manifest written by
+[`..\scripts\Get-EvidenceManifest.ps1`](../scripts/Get-EvidenceManifest.ps1),
+so a SHA-256 never has to be retyped:
+
+```powershell
+.\scripts\Add-EvidenceToWorkbook.ps1 `
+    -ManifestPath D:\Cases\INC1234\HOST01\evidence-manifest.csv `
+    -WorkbookPath D:\Cases\INC1234\INC1234-tracking.xlsx `
+    -SourceHost HOST01 -CollectedBy 'D. Flinton'
+```
+
+By default it writes **one row for the whole collection**, and the hash it
+records is the hash of the manifest. A triage collection is tens of thousands
+of files and an evidence log with tens of thousands of rows is not an evidence
+log; it records evidence items. Since the manifest lists every file's own
+SHA-256, pinning the manifest pins the set, and
+`Get-EvidenceManifest.ps1 -Verify` checks the files themselves.
+
+`-Mode PerFile` writes a row per file, for the small targeted collections where
+that is what you actually want. Re-running skips anything already logged by
+hash, and `-CollectionMethod` is checked against the workbook's own `Lists`
+values before anything is written.
 
 `Artifact Source` on the Event Timeline carries entries like `EV 4624` and
 `EV 4625`, which is the same vocabulary
 [`..\scripts\Get-EvtxTriage.ps1`](../scripts/Get-EvtxTriage.ps1) produces.
 
-## Known limits
+## Appending rows
 
-The sheets are pre-built to a fixed number of rows, and the rollup formulas on
-Case Overview read fixed ranges. Appending past the last pre-built row works,
-but those rows fall outside the dropdowns and outside the counts. See the
-repository README for the specifics if you plan to run a large case through it.
+Every table sheet is a real Excel Table, so a row added at the bottom joins the
+table and inherits its formulas, formatting and dropdowns. The `#` column is
+`=ROW()-3` rather than typed numbers, so it renumbers itself.
+
+Two sheets are deliberately not Tables. `Containment & Remediation` is three
+stacked sections with their own header rows, and `Case Overview` is a form.
+
+`Financial Impact` is a Table ending at row 33 with a TOTALS row at 34 just
+below it. Insert rows inside the table rather than typing past it, and the
+totals follow.
