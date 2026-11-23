@@ -122,6 +122,16 @@ source "vmware-iso" "golden" {
   // vmware-iso builder with no extra floppy controller config.
   floppy_files = ["${path.root}/http/autounattend.xml"]
 
+  // Without this, the VM's BIOS boot order leaves the CD-ROM ahead of the
+  // hard disk, so every reboot mid-install (WinPE -> specialize -> OOBE)
+  // boots the ISO again instead of continuing on disk - Windows Setup
+  // restarts from scratch forever rather than completing. Forcing hdd
+  // first fixes this; the ISO is still attached for file access during
+  // setup, just not boot-prioritized after the first reboot.
+  vmx_data = {
+    "bios.bootOrder" = "hdd,cdrom"
+  }
+
   communicator   = "winrm"
   winrm_username = var.winrm_username
   winrm_password = var.winrm_password
