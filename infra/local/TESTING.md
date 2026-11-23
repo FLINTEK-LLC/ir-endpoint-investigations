@@ -44,22 +44,27 @@ cd ir-endpoint-investigations\infra\local\packer
 packer init golden-image.pkr.hcl
 ```
 
-## 3. Get a Windows 11 Pro ISO and product key
+## 3. Get a Windows 11 Pro ISO
 
 Download the ISO from
-[Microsoft's official download page](https://www.microsoft.com/software-download/windows11)
-and have a valid Windows 11 Pro product key ready - a Pro install
-requires one during setup, unlike an evaluation build. Then compute the
-ISO's checksum:
+[Microsoft's official download page](https://www.microsoft.com/software-download/windows11),
+then compute its checksum:
 
 ```powershell
 Get-FileHash -Algorithm SHA256 -LiteralPath C:\Downloads\Win11_Pro.iso
 ```
 
-Keep the `.iso` path, the hash, and the product key - `iso_url` and
-`iso_checksum` are required Packer variables with no default, and
-`product_key` has no default either (see `golden-image.pkr.hcl`'s
-header comment for why it is never hardcoded or committed).
+Keep the `.iso` path and the hash - `iso_url` and `iso_checksum` are
+required Packer variables with no default.
+
+No product key needed to get started: `product_key` defaults to
+Microsoft's own publicly-documented generic KMS client setup key for
+Windows 11 Pro, which selects the edition during setup but does not
+activate Windows (desktop watermark, Settings nag, no functional
+restriction - fine for a disposable, snapshot-revert analyst VM). Pass
+a real key with `-var product_key=...` later for a permanently-activated
+build, no other change needed - see `golden-image.pkr.hcl`'s
+`product_key` variable comment.
 
 ## 4. (Optional) Stage a licensed KAPE zip
 
@@ -77,10 +82,13 @@ packer build `
   -var "iso_url=C:\Downloads\Win11_Pro.iso" `
   -var "iso_checksum=sha256:<the hash from step 3>" `
   -var "winrm_password=<something you will remember>" `
-  -var "product_key=<your Windows 11 Pro product key>" `
   -var "kape_zip_path=C:\Downloads\kape.zip" `
   golden-image.pkr.hcl
 ```
+
+(Omit `kape_zip_path` to skip KAPE for now. `product_key` is also
+optional - omit it to use Microsoft's generic, non-activating Pro key, or
+add `-var "product_key=..."` for a real one.)
 
 Expect this to take the better part of an hour - mostly unattended
 Windows Setup time, then `Setup-Workstation.ps1 -Tier All` fetching the

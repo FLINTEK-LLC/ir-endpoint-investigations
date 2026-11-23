@@ -8,11 +8,14 @@
   This is a STARTING POINT, not a vendor-verified template: Windows Setup's
   unattended answer file schema shifts slightly between builds, and the
   exact <ProductKey>/edition match against the specific ISO matters.
-  Replace PRODUCT-KEY-PLACEHOLDER below with a real Windows 11 Pro product
-  key before building - Pro, unlike an evaluation SKU, requires one at
-  setup time (see golden-image.pkr.hcl's product_key variable; the two
-  must be kept in sync by hand, since this file is static floppy content,
-  not a Packer template).
+  The <ProductKey> below ships set to Microsoft's own publicly-documented
+  generic KMS client setup key for Windows 11 Pro - it selects the edition
+  during setup but does not activate Windows (watermark + Settings nag
+  only, no functional restriction), which matches golden-image.pkr.hcl's
+  product_key variable default. Replace both with a real product key once
+  you have one, for a permanently-activated golden image - the two must be
+  kept in sync by hand either way, since this file is static floppy
+  content, not a Packer template.
 
   WinRM is enabled in the specialize pass specifically so Packer's winrm
   communicator (see golden-image.pkr.hcl) can reach the guest - a stock
@@ -70,10 +73,12 @@
       <UserData>
         <AcceptEula>true</AcceptEula>
         <ProductKey>
-          <!-- Replace with a real Windows 11 Pro product key - see this
-               file's header comment and golden-image.pkr.hcl's
-               product_key variable. Never commit a real key here. -->
-          <Key>PRODUCT-KEY-PLACEHOLDER</Key>
+          <!-- Microsoft's public, non-activating generic KMS client setup
+               key for Windows 11 Pro - selects the edition only, does not
+               activate. Replace with a real key once you have one; see
+               this file's header comment and golden-image.pkr.hcl's
+               product_key variable. -->
+          <Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key>
         </ProductKey>
       </UserData>
     </component>

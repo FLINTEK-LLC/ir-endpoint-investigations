@@ -53,11 +53,13 @@ has no ongoing cost once built. What it costs instead is a one-time setup:
 2. **[Packer](https://developer.hashicorp.com/packer/install)**, to build
    the golden image. One download, no license.
 3. **A Windows 11 Pro ISO**, downloaded by hand from
-   [Microsoft's official download page](https://www.microsoft.com/software-download/windows11),
-   plus a valid Windows 11 Pro product key - the same user-supplied-asset
-   shape as this repo's own KAPE licensing gate (see root
-   [README.md](../../README.md)'s Prerequisites), just licensed media
-   rather than a free evaluation build.
+   [Microsoft's official download page](https://www.microsoft.com/software-download/windows11) -
+   the same user-supplied-asset shape as this repo's own KAPE licensing
+   gate (see root [README.md](../../README.md)'s Prerequisites). No
+   product key required to get started: `product_key` defaults to
+   Microsoft's own public, non-activating generic KMS client setup key
+   for Pro (desktop watermark only, no functional restriction); supply a
+   real key later for a permanently-activated build.
 4. **A licensed KAPE zip** - same gate as everywhere else in this repo
    (see root README.md and [`../README.md`](../README.md)'s "Getting
    KAPE onto the host"). Point `golden-image.pkr.hcl`'s `kape_zip_path`
