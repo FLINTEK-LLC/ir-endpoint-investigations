@@ -118,13 +118,16 @@ source "vmware-iso" "golden" {
 
   // Without an explicit adapter, the disk shows up in Windows Setup's
   // "Where do you want to install Windows" screen as EMPTY - no disk
-  // listed at all, not just unselected - because the stock Windows 11
-  // ISO has no inbox driver for whatever controller the builder defaults
-  // to (varies by plugin version; pvscsi/nvme both need an injected
-  // VMware driver that is not present here). lsilogic has had an inbox
-  // Windows driver since Vista, so Setup sees the disk with no extra
-  // driver injection step needed.
-  disk_adapter_type = "lsilogic"
+  // listed at all, not just unselected. SATA is the deliberate choice
+  // here over any SCSI sub-type (lsilogic/lsisas1068/pvscsi/buslogic):
+  // Workstation's VM Settings panel labels a disk generically as "SCSI"
+  // regardless of which sub-type actually got applied, and a SCSI
+  // sub-type mismatch (or the plugin/guest-OS-profile combination
+  // silently not honoring the requested one) is exactly the kind of
+  // thing that produces a disk with no recognized inbox driver. SATA's
+  // AHCI driver has been inbox in Windows since Vista, across every
+  // mainstream hypervisor, with no sub-type ambiguity to get wrong.
+  disk_adapter_type = "sata"
 
   // autounattend.xml drives Windows Setup through a floppy image - the
   // oldest and most universally-supported injection mechanism for
