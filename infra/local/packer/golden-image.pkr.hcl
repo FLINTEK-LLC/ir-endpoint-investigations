@@ -116,6 +116,16 @@ source "vmware-iso" "golden" {
   version              = 19            // Workstation 17.x virtual hardware version.
   network_adapter_type = "vmxnet3"     // VMware's paravirtualized NIC - the vmware-iso builder installs VMware Tools into the guest automatically as part of a normal build, which vmxnet3 needs; it gives real network throughput, matters for both the Packer provisioners and this module's own guest-IP/RDP steps in New-LocalCase.ps1/Connect-LocalHost.ps1.
 
+  // Without an explicit adapter, the disk shows up in Windows Setup's
+  // "Where do you want to install Windows" screen as EMPTY - no disk
+  // listed at all, not just unselected - because the stock Windows 11
+  // ISO has no inbox driver for whatever controller the builder defaults
+  // to (varies by plugin version; pvscsi/nvme both need an injected
+  // VMware driver that is not present here). lsilogic has had an inbox
+  // Windows driver since Vista, so Setup sees the disk with no extra
+  // driver injection step needed.
+  disk_adapter_type = "lsilogic"
+
   // autounattend.xml drives Windows Setup through a floppy image - the
   // oldest and most universally-supported injection mechanism for
   // unattended Windows installs, and the one that works with the stock
