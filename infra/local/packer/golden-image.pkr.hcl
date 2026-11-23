@@ -185,23 +185,30 @@ source "vmware-iso" "golden" {
   }
 
   // The ISO's "Press any key to boot from CD or DVD" prompt has a short,
-  // host-speed-dependent window - EFI POST timing varies enough that a
-  // short boot_wait/few-keystroke window misses it unpredictably (seen in
-  // practice: a 2s wait + 4 keypresses was NOT enough and required a
-  // manual keypress to proceed). Wait longer before the first keystroke,
-  // then spread presses across a wide window so timing variance across
-  // different host hardware can't cause a missed boot - this costs at
-  // most under a minute against an hour-long build either way.
-  boot_wait = "5s"
+  // host-speed-dependent window. Confirmed by direct observation: the
+  // prompt DOES appear, but scripted keystrokes were not landing in time
+  // even at boot_wait=5s - most likely because Packer sends boot_command
+  // keys over a VNC channel to the VM, and that channel itself needs time
+  // to establish before any key actually reaches the guest, on top of
+  // EFI POST/prompt-appearance timing. Pushed boot_wait much higher to
+  // guarantee the VNC connection is live before the first key fires, and
+  // extended the keystroke train significantly - both spacebar and enter,
+  // since the exact key this ISO's prompt listens for is not confirmed.
+  // This costs at most ~2 minutes against an hour-long build.
+  boot_wait = "15s"
   boot_command = [
     "<spacebar><wait5>",
+    "<enter><wait5>",
     "<spacebar><wait5>",
+    "<enter><wait5>",
     "<spacebar><wait5>",
+    "<enter><wait5>",
     "<spacebar><wait5>",
+    "<enter><wait5>",
     "<spacebar><wait5>",
+    "<enter><wait5>",
     "<spacebar><wait5>",
-    "<spacebar><wait5>",
-    "<spacebar><wait5>",
+    "<enter><wait5>",
   ]
 
   // Uploading an ISO is not installing Tools; the first provisioner below
