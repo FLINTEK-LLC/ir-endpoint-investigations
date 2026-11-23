@@ -187,6 +187,76 @@ function Test-Console {
 Test-Console -ConsolePath (Join-Path $InfraRoot 'Start-CloudConsole.ps1') `
     -ScriptDir (Join-Path $InfraRoot 'scripts') -InvokerName 'Invoke-ScriptFile'
 
+# The local VMware console dispatches to BOTH infra\local\scripts\ and
+# infra\local\packer\scripts\ via the same Invoke-ScriptFile helper, with
+# an explicit -Dir argument per call rather than one fixed $ScriptDir -
+# Test-Console's generic "script must exist, flags must be declared"
+# check is extended just enough to resolve that per-call directory instead
+# of assuming a single one.
+function Test-LocalConsole {
+    param([string]$ConsolePath, [string]$LocalRoot)
+    $name = Split-Path $ConsolePath -Leaf
+    $t = $null; $e = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($ConsolePath, [ref]$t, [ref]$e)
+    if ($e -and $e.Count -gt 0) { Test-Item "$name parses" $false; return }
+
+    $defined = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) |
+            ForEach-Object { $_.Name })
+    $defined += @('Read-Default', 'Read-Required', 'Read-YesNo', 'Read-Choice', 'Wait-ForEnter')
+
+    $src = Get-Content -Raw $ConsolePath
+    $dispatch = [regex]::Matches($src, "(?m)^\s*'[^']+'\s*\{\s*(Invoke-[A-Za-z-]+|Show-[A-Za-z-]+)") |
+        ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+    foreach ($fn in $dispatch) {
+        Test-Item "$name dispatches to $fn" ($defined -contains $fn)
+    }
+
+    $menuValues = [regex]::Matches($src, "Value\s*=\s*'([^']+)'\s*;\s*Label") | ForEach-Object { $_.Groups[1].Value }
+    if ($menuValues) {
+        $branches = [regex]::Matches($src, "(?m)^\s*'([^']+)'\s*\{") | ForEach-Object { $_.Groups[1].Value }
+        foreach ($v in $menuValues) {
+            if ($v -eq 'Q') { continue }
+            Test-Item "$name menu key [$v] has a dispatch branch" ($branches -contains $v)
+        }
+    }
+
+    $calls = $ast.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-ScriptFile'
+        }, $true)
+    foreach ($call in $calls) {
+        $elems = $call.CommandElements
+        # -Dir <path> -Name <script> -ScriptArgs <...> - named parameters,
+        # order not guaranteed, so pull the values by flag name rather than
+        # assuming a fixed position the way the other two consoles' single
+        # fixed $ScriptDir let Test-Console do.
+        $argText = ($elems | ForEach-Object { $_.Extent.Text }) -join ' '
+        $dirMatch = [regex]::Match($argText, '-Dir\s+\$script:(\w+)')
+        $nameMatch = [regex]::Match($argText, "-Name\s+'([^']+)'")
+        if (-not $nameMatch.Success) { continue }
+        $target = $nameMatch.Groups[1].Value
+        $dirVarName = if ($dirMatch.Success) { $dirMatch.Groups[1].Value } else { $null }
+        $dir = switch ($dirVarName) {
+            'ScriptsDir' { Join-Path $LocalRoot 'scripts' }
+            'PackerScriptsDir' { Join-Path $LocalRoot 'packer\scripts' }
+            default { Join-Path $LocalRoot 'scripts' }
+        }
+        $path = Join-Path $dir $target
+        Test-Item "$name -> $target exists" (Test-Path $path)
+        if (-not (Test-Path $path)) { continue }
+        $declared = Get-ScriptParams -Path $path
+        if ($null -eq $declared) { continue }
+        $flags = [regex]::Matches($argText, "'-([A-Za-z][A-Za-z0-9]*)'") |
+            ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+        foreach ($flag in $flags) {
+            Test-Item "$name -> $target -$flag is a declared parameter" ($declared -contains $flag)
+        }
+    }
+}
+
+$LocalRoot = Join-Path $InfraRoot 'local'
+Test-LocalConsole -ConsolePath (Join-Path $LocalRoot 'Start-LocalConsole.ps1') -LocalRoot $LocalRoot
+
 # The IR console runs deployed copies under <KapePath>\Modules\bin, which may
 # not exist on this machine, so only its checkout-relative calls are checked.
 Test-Console -ConsolePath (Join-Path $PSScriptRoot 'Start-IRConsole.ps1') `

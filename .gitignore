@@ -51,3 +51,14 @@ infra/.cases/
 # can offer them as defaults. Same rule as above: bookkeeping, never secrets,
 # but specific to one operator's cloud accounts and not shared state.
 infra/.prereqs.json
+
+# Local VMware Workstation module - same bookkeeping-not-secrets rule as
+# infra/.cases/ above, just for the local case lifecycle (infra/local/).
+infra/local/.cases/
+
+# Packer build output for the golden image - a multi-GB VM disk/.vmx tree,
+# never source content, and specific to whatever ISO/kape.zip you built it
+# with locally.
+infra/local/packer/output-*/
+infra/local/packer/packer_cache/
+crash.log.packer
