@@ -21,7 +21,7 @@
   communicator (see golden-image.pkr.hcl) can reach the guest - a stock
   Windows install does not have WinRM listening by default.
 -->
-<unattend xmlns="urn:schemas-microsoft-com:unattend">
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
   <settings pass="windowsPE">
     <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <SetupUILanguage>
@@ -33,6 +33,42 @@
       <InputLocale>en-US</InputLocale>
     </component>
     <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <!-- Windows 11's hardware compatibility check (TPM 2.0, Secure Boot,
+           RAM/CPU/storage minimums) runs inside WinPE before DiskConfiguration
+           below, and a VMware Workstation VM built by vmware-iso has none of
+           those by default (no vTPM, no Secure Boot) unless separately
+           configured. Without a bypass, Setup rejects the install and
+           restarts WinPE's own setup process - this is what a hardware-check
+           failure actually looks like: a boot loop, not a clear error
+           dialog, because nothing here waits for user interaction. These
+           keys go into WinPE's OWN live registry (not the target OS being
+           installed, which does not exist yet at this point in windowsPE
+           pass) - the standard, widely-documented bypass for Windows 11 on
+           hardware/VMs that don't meet the official minimums. RunSynchronous
+           commands execute in Order before DiskConfiguration/ImageInstall.
+      -->
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
       <DiskConfiguration>
         <Disk wcm:action="add">
           <CreatePartitions>
