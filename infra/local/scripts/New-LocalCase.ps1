@@ -54,7 +54,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$EvidencePath,
 
-    [string]$VmxPath = (Join-Path $env:USERPROFILE 'Documents\Virtual Machines\ir-golden\ir-golden.vmx'),
+    [string]$VmxPath = (Join-Path $PSScriptRoot '..\packer\output-ir-golden\ir-golden.vmx'),
 
     [string]$SnapshotName = 'golden-clean',
 

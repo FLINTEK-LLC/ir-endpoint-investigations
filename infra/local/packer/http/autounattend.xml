@@ -103,6 +103,17 @@
               <Value>Windows 11 Pro</Value>
             </MetaData>
           </InstallFrom>
+          <!-- Without this, Setup wipes/creates the partition above per
+               DiskConfiguration but is never told to actually install
+               there - InstallToAvailablePartition=false with no InstallTo
+               target is exactly what drops Setup to the manual "Where do
+               you want to install Windows" screen instead of proceeding
+               unattended. Must match DiskConfiguration's DiskID/PartitionID
+               above (disk 0, partition 1). -->
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>1</PartitionID>
+          </InstallTo>
           <InstallToAvailablePartition>false</InstallToAvailablePartition>
         </OSImage>
       </ImageInstall>
