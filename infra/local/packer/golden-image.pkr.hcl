@@ -168,7 +168,6 @@ source "vmware-iso" "golden" {
   cdrom_adapter_type = "sata"
 
   // Render at build time, keeping account/key settings in one place.
-  floppy_files = ["${path.root}/scripts/bootstrap-winrm.ps1"]
   floppy_content = {
     "autounattend.xml" = templatefile("http/autounattend.xml", merge(local.unattend_values, {
       windows_partition_mb = local.windows_partition_mb
