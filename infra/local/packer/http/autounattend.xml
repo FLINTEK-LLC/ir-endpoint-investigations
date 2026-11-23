@@ -5,21 +5,16 @@
   (Microsoft's official download page has no scriptable download, but
   once an ISO is in hand, the install itself can be fully unattended).
 
-  This is a STARTING POINT, not a vendor-verified template: Windows Setup's
-  unattended answer file schema shifts slightly between builds, and the
-  exact <ProductKey>/edition match against the specific ISO matters.
-  The <ProductKey> below ships set to Microsoft's own publicly-documented
-  generic KMS client setup key for Windows 11 Pro - it selects the edition
-  during setup but does not activate Windows (watermark + Settings nag
-  only, no functional restriction), which matches golden-image.pkr.hcl's
-  product_key variable default. Replace both with a real product key once
-  you have one, for a permanently-activated golden image - the two must be
-  kept in sync by hand either way, since this file is static floppy
-  content, not a Packer template.
+  Packer renders this XML template into the floppy's autounattend.xml;
+  do not copy the template directly to a floppy. Credentials, computer name,
+  Pro setup key, and Windows partition size come from golden-image.pkr.hcl.
+  The default key selects Windows 11 Pro; it does not provide a license.
+  The ISO must contain an amd64 image named exactly "Windows 11 Pro".
 
-  WinRM is enabled in the specialize pass specifically so Packer's winrm
-  communicator (see golden-image.pkr.hcl) can reach the guest - a stock
-  Windows install does not have WinRM listening by default.
+  EFI firmware is explicitly selected in the VMX. Disk 0 is the VM's only
+  fixed disk; its contents are wiped. The floppy and optical media do not
+  consume fixed-disk IDs. Do not attach additional hard disks during setup.
+  WinRM is configured at first logon after the local administrator exists.
 -->
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
   <settings pass="windowsPE">
@@ -33,19 +28,12 @@
       <InputLocale>en-US</InputLocale>
     </component>
     <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <!-- Windows 11's hardware compatibility check (TPM 2.0, Secure Boot,
-           RAM/CPU/storage minimums) runs inside WinPE before DiskConfiguration
-           below, and a VMware Workstation VM built by vmware-iso has none of
-           those by default (no vTPM, no Secure Boot) unless separately
-           configured. Without a bypass, Setup rejects the install and
-           restarts WinPE's own setup process - this is what a hardware-check
-           failure actually looks like: a boot loop, not a clear error
-           dialog, because nothing here waits for user interaction. These
-           keys go into WinPE's OWN live registry (not the target OS being
-           installed, which does not exist yet at this point in windowsPE
-           pass) - the standard, widely-documented bypass for Windows 11 on
-           hardware/VMs that don't meet the official minimums. RunSynchronous
-           commands execute in Order before DiskConfiguration/ImageInstall.
+      <!-- Run in the live WinPE registry, in command Order. Keep these
+           before installation; XML element order alone does not schedule
+           Setup phases. LabConfig is an undocumented compatibility bypass,
+           not a supported hardware configuration or a guarantee for future
+           Windows ISOs. It does not emulate missing CPU instructions.
+           The existing build reached disk selection with these commands.
       -->
       <RunSynchronous>
         <RunSynchronousCommand wcm:action="add">
@@ -69,11 +57,30 @@
           <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
         </RunSynchronousCommand>
       </RunSynchronous>
+      <!-- GPT layout, paired with firmware=efi: ESP, MSR, Windows, WinRE.
+           Recovery is last so Windows can resize it during servicing. -->
       <DiskConfiguration>
         <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
           <CreatePartitions>
             <CreatePartition wcm:action="add">
               <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>300</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Size>${windows_partition_mb}</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>4</Order>
               <Type>Primary</Type>
               <Extend>true</Extend>
             </CreatePartition>
@@ -82,50 +89,51 @@
             <ModifyPartition wcm:action="add">
               <Order>1</Order>
               <PartitionID>1</PartitionID>
+              <Label>System</Label>
+              <Format>FAT32</Format>
+            </ModifyPartition>
+            <!-- The MSR is not formatted or assigned a drive letter. -->
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>3</PartitionID>
               <Label>Windows</Label>
               <Format>NTFS</Format>
               <Letter>C</Letter>
             </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>4</PartitionID>
+              <Label>Recovery</Label>
+              <Format>NTFS</Format>
+              <TypeID>de94bba4-06d1-4d40-a16a-bfd50179d6ac</TypeID>
+            </ModifyPartition>
           </ModifyPartitions>
-          <DiskID>0</DiskID>
-          <WillWipeDisk>true</WillWipeDisk>
         </Disk>
+        <WillShowUI>OnError</WillShowUI>
       </DiskConfiguration>
       <ImageInstall>
         <OSImage>
           <InstallFrom>
-            <!-- Verify this index against the specific ISO's own image
-                 list (dism /Get-WimInfo) before a real build - a
-                 multi-edition Windows 11 ISO can list Pro at an index
-                 other than 1. -->
+            <!-- Select by image NAME, not an ISO-dependent numeric index.
+                 Confirm the name with DISM /Get-WimInfo on install.wim/esd. -->
             <MetaData wcm:action="add">
               <Key>/IMAGE/NAME</Key>
               <Value>Windows 11 Pro</Value>
             </MetaData>
           </InstallFrom>
-          <!-- Without this, Setup wipes/creates the partition above per
-               DiskConfiguration but is never told to actually install
-               there - InstallToAvailablePartition=false with no InstallTo
-               target is exactly what drops Setup to the manual "Where do
-               you want to install Windows" screen instead of proceeding
-               unattended. Must match DiskConfiguration's DiskID/PartitionID
-               above (disk 0, partition 1). -->
+          <!-- Install to Windows, not the ESP or recovery partition. -->
           <InstallTo>
             <DiskID>0</DiskID>
-            <PartitionID>1</PartitionID>
+            <PartitionID>3</PartitionID>
           </InstallTo>
-          <InstallToAvailablePartition>false</InstallToAvailablePartition>
+          <WillShowUI>OnError</WillShowUI>
         </OSImage>
       </ImageInstall>
       <UserData>
         <AcceptEula>true</AcceptEula>
         <ProductKey>
-          <!-- Microsoft's public, non-activating generic KMS client setup
-               key for Windows 11 Pro - selects the edition only, does not
-               activate. Replace with a real key once you have one; see
-               this file's header comment and golden-image.pkr.hcl's
-               product_key variable. -->
-          <Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key>
+          <Key>${product_key}</Key>
+          <WillShowUI>OnError</WillShowUI>
         </ProductKey>
       </UserData>
     </component>
@@ -133,7 +141,7 @@
 
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <ComputerName>ir-golden</ComputerName>
+      <ComputerName>${computer_name}</ComputerName>
       <!-- UTC, matching the cloud investigation host's own default
            (infra\scripts\bootstrap-investigation-host.ps1 -TimeZoneId) -
            a forensic workstation's own local clock skew should never be
@@ -144,12 +152,7 @@
       <fDenyTSConnections>false</fDenyTSConnections>
     </component>
     <component name="Networking-MPSSVC-Svc" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <!-- Opens the firewall for Remote Desktop AND WinRM. This is a
-           golden image reached only through VMware's own virtual network
-           (NAT by default - see infra\local\README.md), never bound to a
-           real public interface, so this is not the same exposure the
-           cloud module's SECURITY.md works hard to avoid for a
-           publicly-routable host. -->
+      <!-- RDP only. WinRM gets a separate rule at first logon. -->
       <FirewallGroups>
         <FirewallGroup wcm:action="add" wcm:keyValue="RemoteDesktop">
           <Active>true</Active>
@@ -161,53 +164,49 @@
   </settings>
 
   <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <OOBE>
         <HideEULAPage>true</HideEULAPage>
         <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
         <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
         <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
-        <NetworkLocation>Work</NetworkLocation>
         <ProtectYourPC>3</ProtectYourPC>
-        <SkipMachineOOBE>true</SkipMachineOOBE>
-        <SkipUserOOBE>true</SkipUserOOBE>
       </OOBE>
       <UserAccounts>
         <LocalAccounts>
           <LocalAccount wcm:action="add">
-            <!-- Matches golden-image.pkr.hcl's winrm_username/winrm_password
-                 defaults - change BOTH together if either is overridden at
-                 build time, or Packer's WinRM communicator cannot connect.
-                 Plaintext here is an autounattend.xml schema limitation,
-                 not a choice this project made - see the .pkr.hcl's
-                 winrm_password comment for the same caveat. -->
+            <!-- Rendered from the same variables as Packer's communicator. -->
             <Password>
-              <Value>ChangeMe!IR-Golden-2026</Value>
+              <Value>${winrm_password}</Value>
               <PlainText>true</PlainText>
             </Password>
             <Group>Administrators</Group>
-            <Name>ir-analyst</Name>
+            <Name>${winrm_username}</Name>
           </LocalAccount>
         </LocalAccounts>
       </UserAccounts>
       <AutoLogon>
         <Enabled>true</Enabled>
-        <Username>ir-analyst</Username>
+        <Username>${winrm_username}</Username>
         <Password>
-          <Value>ChangeMe!IR-Golden-2026</Value>
+          <Value>${winrm_password}</Value>
           <PlainText>true</PlainText>
         </Password>
-        <LogonCount>5</LogonCount>
+        <LogonCount>1</LogonCount>
       </AutoLogon>
       <FirstLogonCommands>
-        <!-- WinRM's own quickconfig wizard prompts interactively by
-             default; -Force is what makes it unattended. This is the step
-             that actually makes Packer's winrm communicator able to
-             connect - everything above just gets Windows itself booted
-             and logged in. -->
+        <!-- The VMware floppy remains attached until provisioning completes.
+             Use a script to stay below CommandLine's 1024-character limit;
+             the script logs to C:\Windows\Temp\packer-winrm.log. -->
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force; winrm quickconfig -quiet; Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true; Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true"</CommandLine>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -File A:\bootstrap-winrm.ps1</CommandLine>
           <Description>Enable WinRM for Packer</Description>
         </SynchronousCommand>
       </FirstLogonCommands>

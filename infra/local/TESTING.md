@@ -81,22 +81,28 @@ cd ir-endpoint-investigations\infra\local\packer
 packer build `
   -var "iso_url=C:\Downloads\Win11_Pro.iso" `
   -var "iso_checksum=sha256:<the hash from step 3>" `
-  -var "winrm_password=<something you will remember>" `
+  -var "winrm_password=<at least 12 characters, Windows complexity rules apply>" `
   -var "kape_zip_path=C:\Downloads\kape.zip" `
   golden-image.pkr.hcl
 ```
 
 (Omit `kape_zip_path` to skip KAPE for now. `product_key` is also
 optional - omit it to use Microsoft's generic, non-activating Pro key, or
-add `-var "product_key=..."` for a real one.)
+add `-var "product_key=..."` for a real one. `winrm_password` has no
+default and must be 12+ characters - Packer validates this before a
+build even starts. VMware Tools gets installed by a dedicated
+provisioner from Workstation's own bundled `windows.iso`; if your
+Workstation install doesn't ship one, pass
+`-var "vmware_tools_iso_path=C:\path\to\windows.iso"`.)
 
 Expect this to take the better part of an hour - mostly unattended
 Windows Setup time, then `Setup-Workstation.ps1 -Tier All` fetching the
 full analyst toolset inside the guest. Watch the VM's own window (this
 template does not run headless) - if Windows Setup stalls on a screen
 rather than proceeding, `http/autounattend.xml` needs a tweak for the
-specific ISO build (see that file's `/IMAGE/NAME` setting and
-`<ProductKey>` placeholder, the two most common mismatches).
+specific ISO build (see that file's `/IMAGE/NAME` setting, the most
+common mismatch - credentials/product key/computer name are templated
+from Packer variables now, not hand-edited in this file).
 
 **What to check when it finishes:** Packer reports a build success and
 leaves `output-ir-golden\ir-golden.vmx` powered off. If it instead times

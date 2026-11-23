@@ -21,13 +21,13 @@
 //   https://www.microsoft.com/software-download/windows11
 // (Windows 11 Pro - chosen over Windows Server 2022/2025 because this is
 // a single-analyst workstation, not a server role. Unlike an evaluation
-// build, Pro requires a valid product key during setup - see the
-// `product_key` variable below.)
+// build, Pro requires appropriate licensing; the generic setup key below
+// selects Pro without providing a license or retail activation.)
 
 packer {
   required_plugins {
     vmware = {
-      version = ">= 1.0.11"
+      version = "= 2.1.7"
       source  = "github.com/hashicorp/vmware"
     }
   }
@@ -47,12 +47,21 @@ variable "product_key" {
   type        = string
   sensitive   = true
   default     = "W269N-WFGWX-YVC9B-4J6C9-T83GX"
-  description = "Windows 11 Pro product key. Defaults to Microsoft's own publicly-documented generic KMS client setup key for Pro - this selects the edition during setup but does NOT activate Windows (desktop watermark, Settings nag, no functional restriction otherwise), which is fine for a disposable, snapshot-revert analyst VM with no personalization needs. Pass a real key with -var once you have one, for a permanently-activated golden image instead - no other change needed. Unlike winrm_password, autounattend.xml cannot read this variable (a floppy file is static content, not a template), so whatever key is used here must also be placed directly into http/autounattend.xml's <ProductKey><Key> element before building - same 'change both together' requirement winrm_password already documents. Never hardcode a REAL license key in a committed copy of autounattend.xml or in any committed .pkrvars file - pass it with -var or a gitignored .pkrvars.hcl, same convention as this repo's admin_password variables in infra/modules/*/investigation-host/variables.tf. The generic key above is safe to commit since it is Microsoft's own public, non-activating default."
+  description = "Windows 11 Pro setup key, rendered into the answer file. The default is Microsoft's public Pro KMS client key; activation requires a licensed KMS environment or a suitable replacement key. Supply real keys via a gitignored var file or environment variable."
 }
 
 variable "vm_name" {
   type    = string
   default = "ir-golden"
+}
+
+variable "computer_name" {
+  type    = string
+  default = "ir-golden"
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9-]{0,14}$", var.computer_name)) && !can(regex("^[0-9]+$", var.computer_name))
+    error_message = "Computer name must be 1-15 ASCII letters, digits or hyphens, start with a letter or digit, and not be entirely numeric."
+  }
 }
 
 variable "output_directory" {
@@ -62,7 +71,11 @@ variable "output_directory" {
 }
 
 variable "disk_size_mb" {
-  type    = number
+  type = number
+  validation {
+    condition     = var.disk_size_mb >= 65536 && floor(var.disk_size_mb) == var.disk_size_mb
+    error_message = "Disk size must be an integer of at least 65536 (Windows 11 minimum storage)."
+  }
   default = 81920 # 80 GB - KAPE + EZ Tools GUI suite + Sysinternals + Autopsy + Volatility3/MemProcFS/ImHex + Windows itself, with real headroom for case evidence copied in during provisioning tests.
 }
 
@@ -79,13 +92,21 @@ variable "cpus" {
 variable "winrm_username" {
   type        = string
   default     = "ir-analyst"
-  description = "Local account autounattend.xml creates and enables WinRM for, so Packer's provisioners can connect. This is also the account used to RDP in afterwards - set winrm_password to something memorable, or change it once the VM comes up."
+  description = "Local administrator rendered into autounattend.xml and used for WinRM and RDP."
+  validation {
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9_-]{0,19}$", var.winrm_username)) && !contains(["administrator", "guest"], lower(var.winrm_username))
+    error_message = "WinRM username must be 1-20 letters/digits/underscores/hyphens, start with a letter, and not be Administrator or Guest."
+  }
 }
 
 variable "winrm_password" {
   type        = string
   sensitive   = true
-  description = "Plaintext in autounattend.xml by necessity - unattended Windows setup has no secrets-manager hook. The committed http/autounattend.xml ships a placeholder password (ChangeMe!IR-Golden-2026); it is not a real secret, but change it (in BOTH autounattend.xml and this variable, they must match) before relying on this VM long-term."
+  description = "Password rendered into the floppy answer file for the local administrator and AutoLogon. Required; no committed password default. Treat build artifacts containing the answer file as credentials."
+  validation {
+    condition     = length(var.winrm_password) >= 12
+    error_message = "Use a winrm_password of at least 12 characters that satisfies Windows password complexity requirements."
+  }
 }
 
 // A local kape.zip is NOT fetched by this template - same licensing gate
@@ -97,9 +118,31 @@ variable "winrm_password" {
 // KAPE-coupled parsing toolchain (EZ Tools CLI, Hayabusa, Chainsaw,
 // Hindsight, RegRipper) - Setup-Workstation.ps1 itself reports this
 // clearly rather than failing the whole build.
+variable "vmware_tools_iso_path" {
+  type        = string
+  default     = ""
+  description = "Optional absolute host path to VMware Tools windows.iso. If empty, use windows.iso in Workstation's installation directory. Required when that installation does not bundle the Tools ISO."
+}
+
 variable "kape_zip_path" {
   type    = string
   default = ""
+}
+
+// XML-escape text before rendering; passwords containing &, < or quotes
+// must not corrupt the answer file. Keep the raw variables for WinRM.
+locals {
+  unattend_values = {
+    for key, value in {
+      product_key    = var.product_key
+      computer_name  = var.computer_name
+      winrm_username = var.winrm_username
+      winrm_password = var.winrm_password
+    } : key => replace(replace(replace(replace(replace(value, "&", "&amp;"), "<", "&lt;"), ">", "&gt;"), "\"", "&quot;"), "'", "&apos;")
+  }
+  // Leave 4 MiB for alignment/metadata. The final recovery partition grows
+  // into the remaining space; the Windows partition size follows disk_size_mb.
+  windows_partition_mb = var.disk_size_mb - 300 - 16 - 1536 - 4
 }
 
 source "vmware-iso" "golden" {
@@ -108,47 +151,58 @@ source "vmware-iso" "golden" {
   iso_url          = var.iso_url
   iso_checksum     = var.iso_checksum
 
-  disk_size            = var.disk_size_mb
-  memory               = var.memory_mb
-  cpus                 = var.cpus
-  guest_os_type        = "windows9-64" # Workstation's internal id for Windows 10/11 64-bit guests.
-  headless             = false         // Visible while building is worth it the first few times you debug autounattend.xml.
-  version              = 19            // Workstation 17.x virtual hardware version.
-  network_adapter_type = "vmxnet3"     // VMware's paravirtualized NIC - the vmware-iso builder installs VMware Tools into the guest automatically as part of a normal build, which vmxnet3 needs; it gives real network throughput, matters for both the Packer provisioners and this module's own guest-IP/RDP steps in New-LocalCase.ps1/Connect-LocalHost.ps1.
+  disk_size     = var.disk_size_mb
+  memory        = var.memory_mb
+  cpus          = var.cpus
+  guest_os_type = "windows9-64" # Workstation's internal id for Windows 10/11 64-bit guests.
+  headless      = false         // Visible while building is worth it the first few times you debug autounattend.xml.
+  version       = 19            // Supported by Workstation 17.6+ (version 19 originated with Workstation 16.2).
+  // E1000E has an inbox Windows driver: WinRM must work BEFORE Tools can
+  // be uploaded. Packer does not automatically install VMware Tools.
+  network_adapter_type = "e1000e"
+  network              = "nat"
 
-  // Without an explicit adapter, the disk shows up in Windows Setup's
-  // "Where do you want to install Windows" screen as EMPTY - no disk
-  // listed at all, not just unselected. SATA is the deliberate choice
-  // here over any SCSI sub-type (lsilogic/lsisas1068/pvscsi/buslogic):
-  // Workstation's VM Settings panel labels a disk generically as "SCSI"
-  // regardless of which sub-type actually got applied, and a SCSI
-  // sub-type mismatch (or the plugin/guest-OS-profile combination
-  // silently not honoring the requested one) is exactly the kind of
-  // thing that produces a disk with no recognized inbox driver. SATA's
-  // AHCI driver has been inbox in Windows since Vista, across every
-  // mainstream hypervisor, with no sub-type ambiguity to get wrong.
-  disk_adapter_type = "sata"
+  // Keep the controller that made the disk visible in this VM's WinPE.
+  // SATA/AHCI works with EFI and does not require a VMware SCSI driver.
+  disk_adapter_type  = "sata"
+  cdrom_adapter_type = "sata"
 
-  // autounattend.xml drives Windows Setup through a floppy image - the
-  // oldest and most universally-supported injection mechanism for
-  // unattended Windows installs, and the one that works with the stock
-  // vmware-iso builder with no extra floppy controller config.
-  floppy_files = ["${path.root}/http/autounattend.xml"]
-
-  // Without this, the VM's BIOS boot order leaves the CD-ROM ahead of the
-  // hard disk, so every reboot mid-install (WinPE -> specialize -> OOBE)
-  // boots the ISO again instead of continuing on disk - Windows Setup
-  // restarts from scratch forever rather than completing. Forcing hdd
-  // first fixes this; the ISO is still attached for file access during
-  // setup, just not boot-prioritized after the first reboot.
-  vmx_data = {
-    "bios.bootOrder" = "hdd,cdrom"
+  // Render at build time, keeping account/key settings in one place.
+  floppy_files = ["${path.root}/scripts/bootstrap-winrm.ps1"]
+  floppy_content = {
+    "autounattend.xml" = templatefile("http/autounattend.xml", merge(local.unattend_values, {
+      windows_partition_mb = local.windows_partition_mb
+    }))
   }
+
+  // Set firmware explicitly through VMX. Must match the GPT/ESP layout
+  // in autounattend.xml; no guest-profile-dependent firmware default.
+  // EFI's Windows Boot Manager entry is created by Setup in NVRAM; the
+  // legacy bios.bootOrder setting is not a substitute for that entry.
+  vmx_data = {
+    "firmware"                = "efi"
+    "uefi.secureBoot.enabled" = "FALSE"
+    "bios.bootOrder"          = "hdd,cdrom"
+  }
+
+  // Accept the ISO's initial "Press any key" prompt once. No keys are
+  // sent on subsequent Setup reboots. EFI startup speed is host-dependent.
+  boot_wait    = "2s"
+  boot_command = ["<spacebar><wait><spacebar><wait><spacebar><wait><spacebar>"]
+
+  // Uploading an ISO is not installing Tools; the first provisioner below
+  // installs it. Workstation's windows.iso must be present on the host.
+  tools_mode          = "upload"
+  tools_source_path   = var.vmware_tools_iso_path
+  tools_upload_flavor = var.vmware_tools_iso_path == "" ? "windows" : ""
+  tools_upload_path   = "C:/Windows/Temp/vmware-tools.iso"
 
   communicator   = "winrm"
   winrm_username = var.winrm_username
   winrm_password = var.winrm_password
-  winrm_timeout  = "6h" // Windows Setup + first-boot + driver install can genuinely take this long on a slow disk/ISO.
+  winrm_use_ssl  = false
+  winrm_use_ntlm = false // Matches the Basic/HTTP bootstrap in the answer file.
+  winrm_timeout  = "6h"  // Windows Setup + first-boot + driver install can genuinely take this long on a slow disk/ISO.
 
   shutdown_command = "shutdown /s /t 10 /f /d p:4:1"
   shutdown_timeout = "15m"
@@ -163,18 +217,31 @@ source "vmware-iso" "golden" {
 build {
   sources = ["source.vmware-iso.golden"]
 
+  provisioner "powershell" {
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "$iso = 'C:\\Windows\\Temp\\vmware-tools.iso'",
+      "$disk = Mount-DiskImage -ImagePath $iso -PassThru",
+      "try { $drive = ($disk | Get-Volume).DriveLetter; if (-not $drive) { throw 'VMware Tools ISO has no drive letter' }; $setup = Start-Process -FilePath ($drive + ':\\setup64.exe') -ArgumentList '/S /v\"/qn REBOOT=ReallySuppress\"' -Wait -PassThru; if ($setup.ExitCode -notin @(0, 3010)) { throw \"VMware Tools installer failed: $($setup.ExitCode)\" } } finally { Dismount-DiskImage -ImagePath $iso }",
+      "Remove-Item -LiteralPath $iso -Force"
+    ]
+  }
+
+  provisioner "windows-restart" {
+    restart_timeout = "15m"
+  }
+
   // Stage the licensed KAPE zip into the guest BEFORE Setup-Workstation.ps1
-  // runs, so it finds kape.exe already in place. Packer's `only` lets this
-  // step be skipped cleanly when kape_zip_path is blank, without an
-  // external shell conditional.
+  // runs. An empty `only` list means ALL builders, so use `except` to
+  // skip these provisioners when the optional zip is absent.
   provisioner "file" {
-    only        = var.kape_zip_path != "" ? ["vmware-iso.golden"] : []
+    except      = var.kape_zip_path == "" ? ["vmware-iso.golden"] : []
     source      = var.kape_zip_path
     destination = "C:/Windows/Temp/kape.zip"
   }
 
   provisioner "powershell" {
-    only = var.kape_zip_path != "" ? ["vmware-iso.golden"] : []
+    except = var.kape_zip_path == "" ? ["vmware-iso.golden"] : []
     inline = [
       "New-Item -ItemType Directory -Path C:\\Tools\\kape -Force | Out-Null",
       "Expand-Archive -LiteralPath C:\\Windows\\Temp\\kape.zip -DestinationPath C:\\Tools\\kape -Force",
@@ -182,13 +249,16 @@ build {
     ]
   }
 
-  // This repo itself, copied in whole rather than re-cloned with git -
-  // the base image has no git installed yet, matching
-  // infra\scripts\fetch-and-bootstrap.ps1's own "no git dependency"
-  // reasoning for the cloud module's first-boot shim.
+  // Copy the runtime source directories explicitly. Uploading the whole
+  // repo would also upload the active output VM/ISO/cache when it lives
+  // under this tree, including potentially locked VMDKs and build secrets.
+  provisioner "powershell" {
+    inline = ["New-Item -ItemType Directory -Path C:\\ir-endpoint-investigations -Force | Out-Null"]
+  }
+
   provisioner "file" {
-    source      = "${path.root}/../../.."
-    destination = "C:/ir-endpoint-investigations"
+    sources     = [for entry in ["scripts", "Modules", "templates", "velociraptor", "README.md", "LICENSE", "METHODOLOGY.md"] : "${path.root}/../../../${entry}"]
+    destination = "C:/ir-endpoint-investigations/"
   }
 
   // Reuses this repo's OWN Setup-Workstation.ps1 rather than reimplementing
