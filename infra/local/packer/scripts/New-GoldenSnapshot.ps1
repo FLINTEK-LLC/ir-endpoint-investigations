@@ -6,12 +6,13 @@
 
 .DESCRIPTION
     Packer's vmware-iso builder has no concept of a named VMware snapshot -
-    it leaves the finished VM powered off and registered (because this
-    template sets keep_registered = true), and that's where its own job
-    ends. Snapshotting is this module's own case-lifecycle concern, not a
-    generic image-build one, so it's a tiny standalone script rather than
-    something bolted onto the Packer template with a shell-out
-    post-processor.
+    it leaves the finished VM powered off and registered (a local
+    Workstation build needs no keep_registered option - see
+    golden-image.pkr.hcl's comment on why that option only applies to a
+    remote/ESXi build), and that's where its own job ends. Snapshotting is
+    this module's own case-lifecycle concern, not a generic image-build
+    one, so it's a tiny standalone script rather than something bolted
+    onto the Packer template with a shell-out post-processor.
 
 .PARAMETER VmxPath
     Defaults to Packer's own output_directory/vm_name convention from
@@ -54,4 +55,3 @@ if ($state -eq 'running') {
 Write-Host "Taking snapshot '$SnapshotName' of $VmxPath..." -ForegroundColor Cyan
 Invoke-Vmrun -VmrunExe $vmrun -Arguments @('snapshot', $VmxPath, $SnapshotName) | Out-Null
 Write-Host "Done. New-LocalCase.ps1's default -VmxPath points here: $VmxPath" -ForegroundColor Green
-Write-Host "If you want case scripts to find it with no -VmxPath override, move/copy the VM to the default they assume: `$env:USERPROFILE\Documents\Virtual Machines\ir-golden\ir-golden.vmx (or just pass -VmxPath every time)." -ForegroundColor DarkGray

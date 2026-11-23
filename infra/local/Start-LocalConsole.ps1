@@ -86,7 +86,7 @@ function Invoke-StartCase {
     if (-not $caseId) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
     $evidencePath = Read-Required -Prompt "Host folder with this case's evidence (mounted read-only into the guest)"
     if (-not $evidencePath) { Write-Host "Cancelled." -ForegroundColor Yellow; return }
-    $vmxDefault = Join-Path $env:USERPROFILE 'Documents\Virtual Machines\ir-golden\ir-golden.vmx'
+    $vmxDefault = Join-Path $LocalRoot 'packer\output-ir-golden\ir-golden.vmx'
     $vmxPath = Read-Default -Prompt "Golden VM .vmx path" -Default $vmxDefault
     $gui = Read-YesNo -Prompt "Start with the VM's console window visible?" -Default $true
     $scriptArgs = @('-CaseId', $caseId, '-EvidencePath', $evidencePath, '-VmxPath', $vmxPath, '-Gui', $(if ($gui) { 'true' } else { 'false' }))
