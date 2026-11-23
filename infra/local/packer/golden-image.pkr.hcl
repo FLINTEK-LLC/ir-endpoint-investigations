@@ -177,18 +177,33 @@ source "vmware-iso" "golden" {
 
   // Set firmware explicitly through VMX. Must match the GPT/ESP layout
   // in autounattend.xml; no guest-profile-dependent firmware default.
-  // EFI's Windows Boot Manager entry is created by Setup in NVRAM; the
-  // legacy bios.bootOrder setting is not a substitute for that entry.
+  // EFI's Windows Boot Manager entry is created by Setup in NVRAM - no
+  // vmx-level boot-order key is needed or honored under EFI firmware
+  // (bios.bootOrder only applies to legacy BIOS and was removed here).
   vmx_data = {
     "firmware"                = "efi"
     "uefi.secureBoot.enabled" = "FALSE"
-    "bios.bootOrder"          = "hdd,cdrom"
   }
 
-  // Accept the ISO's initial "Press any key" prompt once. No keys are
-  // sent on subsequent Setup reboots. EFI startup speed is host-dependent.
-  boot_wait    = "2s"
-  boot_command = ["<spacebar><wait><spacebar><wait><spacebar><wait><spacebar>"]
+  // The ISO's "Press any key to boot from CD or DVD" prompt has a short,
+  // host-speed-dependent window - EFI POST timing varies enough that a
+  // short boot_wait/few-keystroke window misses it unpredictably (seen in
+  // practice: a 2s wait + 4 keypresses was NOT enough and required a
+  // manual keypress to proceed). Wait longer before the first keystroke,
+  // then spread presses across a wide window so timing variance across
+  // different host hardware can't cause a missed boot - this costs at
+  // most under a minute against an hour-long build either way.
+  boot_wait = "5s"
+  boot_command = [
+    "<spacebar><wait5>",
+    "<spacebar><wait5>",
+    "<spacebar><wait5>",
+    "<spacebar><wait5>",
+    "<spacebar><wait5>",
+    "<spacebar><wait5>",
+    "<spacebar><wait5>",
+    "<spacebar><wait5>",
+  ]
 
   // Uploading an ISO is not installing Tools; the first provisioner below
   // installs it. Workstation's windows.iso must be present on the host.
