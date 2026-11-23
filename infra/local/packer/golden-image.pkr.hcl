@@ -5,27 +5,24 @@
 // New-GoldenSnapshot.ps1 to snapshot as `golden-clean`.
 //
 // WHY vmware-iso and not vagrant/vmware-vmx: there is no existing base box
-// to start from (the design brief this module implements is explicit that
-// the user has neither a base VM nor a Windows ISO yet), so this has to
-// build Windows from a real installer ISO, which is what the vmware-iso
-// builder is for.
+// to start from, so this has to build Windows from a real installer ISO,
+// which is what the vmware-iso builder is for.
 //
 // WHY an .iso the user must supply, not a scripted download: Microsoft's
-// evaluation ISOs sit behind a web form (name/email/country) with no
-// stable, scriptable download URL - the exact same shape as this
-// project's own KAPE licensing gate (see root README.md's Prerequisites
-// and infra\README.md's "Getting KAPE onto the host"). This template
-// never tries to fetch one; `iso_url` below is a required variable with
-// no default, so `packer build` fails fast with a clear message instead
-// of silently trying (and failing) to scrape a vendor's download page.
+// Windows 11 Pro ISO is behind an official download page with no stable,
+// scriptable URL - the same shape as this project's own KAPE licensing
+// gate (see root README.md's Prerequisites and infra\README.md's
+// "Getting KAPE onto the host"). This template never tries to fetch one;
+// `iso_url` below is a required variable with no default, so `packer
+// build` fails fast with a clear message instead of silently trying (and
+// failing) to scrape a vendor's download page.
 //
 // Get the ISO from:
-//   https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise
-// (90-day Windows 11 Enterprise evaluation - chosen over Windows Server
-// 2022/2025 because this is a single-analyst workstation, not a server
-// role, and over plain Windows 11 Pro because only the Enterprise/eval
-// SKUs are offered as a redistributable-free, directly downloadable ISO
-// with no OEM/retail key entanglement.)
+//   https://www.microsoft.com/software-download/windows11
+// (Windows 11 Pro - chosen over Windows Server 2022/2025 because this is
+// a single-analyst workstation, not a server role. Unlike an evaluation
+// build, Pro requires a valid product key during setup - see the
+// `product_key` variable below.)
 
 packer {
   required_plugins {
@@ -38,12 +35,18 @@ packer {
 
 variable "iso_url" {
   type        = string
-  description = "Local path or URL to the Windows 11 Enterprise evaluation ISO. No default on purpose - see the file header comment for why this can't be fetched automatically."
+  description = "Local path or URL to the Windows 11 Pro ISO. No default on purpose - see the file header comment for why this can't be fetched automatically."
 }
 
 variable "iso_checksum" {
   type        = string
-  description = "e.g. sha256:<hash>. Compute it yourself after downloading (Get-FileHash -Algorithm SHA256) - Microsoft's evalcenter page does not reliably publish one next to the download."
+  description = "e.g. sha256:<hash>. Compute it yourself after downloading (Get-FileHash -Algorithm SHA256) - Microsoft's download page does not reliably publish one next to the ISO."
+}
+
+variable "product_key" {
+  type        = string
+  sensitive   = true
+  description = "Windows 11 Pro product key. Unlike winrm_password, autounattend.xml cannot read this variable (a floppy file is static content, not a template), so the key entered here must also be placed directly into http/autounattend.xml's <ProductKey><Key> element before building - same 'change both together' requirement winrm_password already documents. No default, and never hardcode a real key in a committed copy of autounattend.xml or in any committed .pkrvars file - pass it with -var or a gitignored .pkrvars.hcl, same convention as this repo's admin_password variables in infra/modules/*/investigation-host/variables.tf."
 }
 
 variable "vm_name" {
@@ -75,13 +78,13 @@ variable "cpus" {
 variable "winrm_username" {
   type        = string
   default     = "ir-analyst"
-  description = "Local account autounattend.xml creates and enables WinRM for, so Packer's provisioners can connect. This is also the account you RDP in as afterwards - set winrm_password to something you'll remember, or change it once the VM comes up."
+  description = "Local account autounattend.xml creates and enables WinRM for, so Packer's provisioners can connect. This is also the account used to RDP in afterwards - set winrm_password to something memorable, or change it once the VM comes up."
 }
 
 variable "winrm_password" {
   type        = string
   sensitive   = true
-  description = "Plaintext in autounattend.xml by necessity - unattended Windows setup has no secrets-manager hook. The committed http/autounattend.xml ships a placeholder password (ChangeMe!IR-Golden-2026); it is not a real secret, but change it (in BOTH autounattend.xml and this variable, they must match) before relying on this VM long-term, and treat any copy of autounattend.xml you point at a real production ISO build the same as other credential-adjacent local files if you ever change the placeholder to something you actually use elsewhere."
+  description = "Plaintext in autounattend.xml by necessity - unattended Windows setup has no secrets-manager hook. The committed http/autounattend.xml ships a placeholder password (ChangeMe!IR-Golden-2026); it is not a real secret, but change it (in BOTH autounattend.xml and this variable, they must match) before relying on this VM long-term."
 }
 
 // A local kape.zip is NOT fetched by this template - same licensing gate

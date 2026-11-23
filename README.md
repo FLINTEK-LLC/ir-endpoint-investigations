@@ -509,8 +509,9 @@ host role uses. TUI-driven via `Start-LocalConsole.ps1`, same menu
 philosophy as the cloud console - see
 [`infra/local/README.md`](infra/local/README.md) for the full design and
 trade-offs, and [`infra/local/TESTING.md`](infra/local/TESTING.md) for a
-from-zero walkthrough (install VMware Workstation + Packer, get a Windows
-evaluation ISO, build the golden image, run a case end to end).
+from-zero walkthrough (install VMware Workstation Pro + Packer, get a
+Windows 11 Pro ISO and product key, build the golden image, run a case
+end to end).
 
 ## Updating and maintaining this module
 

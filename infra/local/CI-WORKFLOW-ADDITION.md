@@ -7,7 +7,7 @@ any file under `.github/workflows/` itself (GitHub rejects that push with
 `workflow` scope"). Every other file in this PR is unaffected - this is
 purely a token-scope limitation on *this* file.
 
-**Action needed from `ctrlaltdean` (or anyone with full `workflow` scope):**
+**Action needed from whoever has full `workflow` scope on this repo:**
 replace the contents of `.github/workflows/selftest.yml` with the version
 below (or apply it as a small manual edit - it is an additive change: one
 new `packer` job, one new line in the existing console smoke-test step).
@@ -108,6 +108,7 @@ jobs:
             -var "iso_url=/tmp/placeholder.iso" \
             -var "iso_checksum=sha256:0000000000000000000000000000000000000000000000000000000000000000" \
             -var "winrm_password=PlaceholderCiOnly!" \
+            -var "product_key=PLACEHOLDER-CI-KEY-0000" \
             infra/local/packer/golden-image.pkr.hcl
 ```
 

@@ -42,34 +42,32 @@ case folders the way the cloud module's Terraform workspaces allow.
 
 Unlike the cloud module (ongoing per-hour cloud billing, see
 [`../README.md`](../README.md)'s cost-consciousness section), this module
-has **no ongoing cost** once built - it is your own hardware and software
-you already licensed. What it costs instead is a one-time setup:
+has no ongoing cost once built. What it costs instead is a one-time setup:
 
-1. **VMware Workstation Pro**, licensed and installed on the machine that
-   will host cases. `vmrun.exe` ships inside the install
+1. **[VMware Workstation Pro](https://www.vmware.com/products/workstation-pro.html)**,
+   installed on the machine that will host cases - free for personal/
+   non-commercial use under Broadcom's current licensing. `vmrun.exe`
+   ships inside the install
    (`C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe` by
-   default) - there is nothing separate to install for the automation
-   itself.
+   default) - nothing separate to install for the automation itself.
 2. **[Packer](https://developer.hashicorp.com/packer/install)**, to build
    the golden image. One download, no license.
-3. **A Windows evaluation ISO**, downloaded by hand. Microsoft gates its
-   evaluation ISOs behind a web form with no stable, scriptable download
-   URL - the same shape as this repo's own KAPE licensing gate (see root
-   [README.md](../../README.md)'s Prerequisites). Get the
-   [Windows 11 Enterprise evaluation](https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise)
-   (90 days) - chosen over a Server SKU because this is a single-analyst
-   workstation, not a server role.
-4. **Your own licensed KAPE zip** - same gate as everywhere else in this
-   repo (see root README.md and [`../README.md`](../README.md)'s "Getting
+3. **A Windows 11 Pro ISO**, downloaded by hand from
+   [Microsoft's official download page](https://www.microsoft.com/software-download/windows11),
+   plus a valid Windows 11 Pro product key - the same user-supplied-asset
+   shape as this repo's own KAPE licensing gate (see root
+   [README.md](../../README.md)'s Prerequisites), just licensed media
+   rather than a free evaluation build.
+4. **A licensed KAPE zip** - same gate as everywhere else in this repo
+   (see root README.md and [`../README.md`](../README.md)'s "Getting
    KAPE onto the host"). Point `golden-image.pkr.hcl`'s `kape_zip_path`
    variable at it, or skip it and install KAPE by hand on the golden VM
    before taking the `golden-clean` snapshot.
 
-Building the golden image is itself a one-time, roughly hour-long step
-(mostly unattended Windows Setup time) - see [TESTING.md](TESTING.md) for
-the full from-zero walkthrough. Every case after that is a snapshot
-revert, which takes seconds to low tens of seconds depending on disk
-speed, not another full OS install.
+Building the golden image is a one-time, roughly hour-long step (mostly
+unattended Windows Setup time) - see [TESTING.md](TESTING.md) for the
+full from-zero walkthrough. Every case after that is a snapshot revert,
+which takes seconds to low tens of seconds, not another full OS install.
 
 ## Architecture
 
@@ -97,7 +95,7 @@ infra/local/
       provision-setup-workstation.ps1  Packer provisioner - runs the repo's
                               Setup-Workstation.ps1 inside the guest, reused
                               rather than reimplemented
-      New-GoldenSnapshot.ps1  Run ONCE, right after `packer build` finishes -
+      New-GoldenSnapshot.ps1  Run once, right after `packer build` finishes -
                               Packer itself has no concept of a named VMware
                               snapshot, so taking `golden-clean` is this
                               module's own step, not Packer's
@@ -123,9 +121,9 @@ infra/local/
 
 See [TESTING.md](TESTING.md) for the full walkthrough. Summary:
 
-1. Install VMware Workstation Pro, Packer, and get the Windows 11
-   Enterprise evaluation ISO (links above).
-2. `packer build -var iso_url=... -var iso_checksum=sha256:... -var winrm_password=... [-var kape_zip_path=...] infra\local\packer\golden-image.pkr.hcl`
+1. Install VMware Workstation Pro, Packer, and get a Windows 11 Pro ISO
+   plus product key (links above).
+2. `packer build -var iso_url=... -var iso_checksum=sha256:... -var winrm_password=... -var product_key=... [-var kape_zip_path=...] infra\local\packer\golden-image.pkr.hcl`
 3. `.\packer\scripts\New-GoldenSnapshot.ps1` - takes the `golden-clean`
    snapshot the rest of this module reverts to.
 
@@ -133,16 +131,16 @@ See [TESTING.md](TESTING.md) for the full walkthrough. Summary:
 
 1. **`[1] Start a case`** - prompts for a case ID and the host folder
    holding that case's evidence (VHD, memory dump, KAPE collection zips -
-   whatever you'd otherwise copy onto a physical analyst workstation by
+   whatever would otherwise be copied onto a physical analyst workstation by
    hand). Reverts the golden VM to `golden-clean`, mounts that folder
    read-only as a VMware shared folder, and powers the VM on.
 2. **`[2] Connect`** - either the VM's own Workstation console window, or
    a real RDP session to the guest's IP (see below for the trade-off).
    Once inside, `scripts\Start-IRConsole.ps1` is already on the box
-   (the golden-image build ran `Setup-Workstation.ps1` for you) - work the
-   case as you normally would, same as the cloud module's host.
-3. **`[3] Stop a case`** when you're done - powers the VM off and reverts
-   it to `golden-clean`. Evidence (the host folder from step 1) is never
+   (the golden-image build ran `Setup-Workstation.ps1` already) - work the
+   case as normal, same as the cloud module's host.
+3. **`[3] Stop a case`** when done - powers the VM off and reverts it to
+   `golden-clean`. Evidence (the host folder from step 1) is never
    touched; only the VM's own disk state is discarded.
 
 `[4] List cases` shows every case this console has started, its status,
@@ -152,7 +150,7 @@ and its evidence path.
 
 Unlike the cloud module, there is no broker to choose here (no SSM, no
 Bastion) - VMware Workstation's own virtual networking (NAT by default) is
-already private and not reachable from outside your machine/LAN, so
+already private and not reachable from outside the host machine/LAN, so
 neither option below opens anything to the internet the way the cloud
 module's `SECURITY.md` has to carefully avoid.
 
@@ -164,12 +162,12 @@ module's `SECURITY.md` has to carefully avoid.
 | Dependency | None - works even with networking fully down inside the guest | Needs the guest's VMware Tools running and its virtual NIC up |
 
 **Why `Console` is the default.** It always works, with zero moving
-parts beyond the VM itself being on - useful for the very first case
-after a fresh golden-image build, before you've confirmed the guest's
-network/Tools are behaving. `Rdp` is the better day-to-day choice once
-you've confirmed connectivity once - it's the same `mstsc.exe` launch
-pattern the cloud module's `Connect-InvestigationHost.ps1` uses, just
-against the VM's local-network IP instead of through SSM/Bastion.
+parts beyond the VM itself being on - useful for the first case after a
+fresh golden-image build, before guest network/Tools are confirmed
+working. `Rdp` is the better day-to-day choice once connectivity is
+confirmed - the same `mstsc.exe` launch pattern the cloud module's
+`Connect-InvestigationHost.ps1` uses, just against the VM's local-network
+IP instead of through SSM/Bastion.
 
 ## Evidence delivery: VMware shared folders, not a mounted drive letter
 
@@ -230,12 +228,12 @@ Every PowerShell script here has been checked with
 every `.ps1` in the repo), and `golden-image.pkr.hcl` with `packer fmt
 -check` and `packer validate` in CI (see
 [`.github/workflows/selftest.yml`](../../.github/workflows/selftest.yml)) -
-no live cloud/network calls needed for either. **No live `packer build`,
-`vmrun` call, or actual VMware Workstation install was exercised as part
-of building this** - there is no VMware Workstation in the environment
-this was authored in, the same "no live cloud credentials" constraint the
+no live cloud/network calls needed for either. No live `packer build`,
+`vmrun` call, or VMware Workstation install was exercised as part of
+building this module - there is no VMware Workstation in the environment
+it was authored in, the same "no live cloud credentials" constraint the
 cloud module's own [`../README.md`](../README.md)'s Verification section
-documents. The first real build (`packer build ...` against your own
-Windows ISO, followed by a real case start/connect/stop cycle) is yours to
-do and report any issue with - see [TESTING.md](TESTING.md) for exactly
-what to run and what to expect at each step.
+documents. The first real build (`packer build ...` against a real
+Windows ISO and product key, followed by a real case start/connect/stop
+cycle) and any issue it surfaces are covered step by step in
+[TESTING.md](TESTING.md).

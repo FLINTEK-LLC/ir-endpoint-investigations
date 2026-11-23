@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Unattended Windows 11 Enterprise (evaluation) setup for the local IR
-  golden image - see ../golden-image.pkr.hcl's header for why this exists
-  (Microsoft's eval ISOs have no scriptable download, but once you HAVE
-  one, the install itself can be fully unattended).
+  Unattended Windows 11 Pro setup for the local IR golden image - see
+  ../golden-image.pkr.hcl's header for why the ISO is user-supplied
+  (Microsoft's official download page has no scriptable download, but
+  once an ISO is in hand, the install itself can be fully unattended).
 
   This is a STARTING POINT, not a vendor-verified template: Windows Setup's
   unattended answer file schema shifts slightly between builds, and the
-  exact <ProductKey>/edition match against your specific ISO matters (an
-  evaluation ISO's setup.exe generally does not prompt for a key at all,
-  which is why none is set here - if your ISO DOES prompt, Windows Setup
-  will fall back to its interactive wizard for that one screen rather than
-  failing outright, so a mismatch here degrades gracefully rather than
-  silently).
+  exact <ProductKey>/edition match against the specific ISO matters.
+  Replace PRODUCT-KEY-PLACEHOLDER below with a real Windows 11 Pro product
+  key before building - Pro, unlike an evaluation SKU, requires one at
+  setup time (see golden-image.pkr.hcl's product_key variable; the two
+  must be kept in sync by hand, since this file is static floppy content,
+  not a Packer template).
 
   WinRM is enabled in the specialize pass specifically so Packer's winrm
   communicator (see golden-image.pkr.hcl) can reach the guest - a stock
@@ -55,14 +55,13 @@
       <ImageInstall>
         <OSImage>
           <InstallFrom>
-            <!-- Index 1 is usually the base Enterprise/Enterprise Evaluation
-                 edition on a Microsoft eval ISO, but verify against YOUR
-                 ISO's own install.wim image list (dism /Get-WimInfo) before
-                 a real build - an eval ISO occasionally ships more than one
-                 image in the same .wim. -->
+            <!-- Verify this index against the specific ISO's own image
+                 list (dism /Get-WimInfo) before a real build - a
+                 multi-edition Windows 11 ISO can list Pro at an index
+                 other than 1. -->
             <MetaData wcm:action="add">
-              <Key>/IMAGE/INDEX</Key>
-              <Value>1</Value>
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows 11 Pro</Value>
             </MetaData>
           </InstallFrom>
           <InstallToAvailablePartition>false</InstallToAvailablePartition>
@@ -70,9 +69,12 @@
       </ImageInstall>
       <UserData>
         <AcceptEula>true</AcceptEula>
-        <!-- No ProductKey element: evaluation ISOs' setup.exe does not
-             require one. If yours does, add
-             <ProductKey><Key>...</Key></ProductKey> here. -->
+        <ProductKey>
+          <!-- Replace with a real Windows 11 Pro product key - see this
+               file's header comment and golden-image.pkr.hcl's
+               product_key variable. Never commit a real key here. -->
+          <Key>PRODUCT-KEY-PLACEHOLDER</Key>
+        </ProductKey>
       </UserData>
     </component>
   </settings>
@@ -122,7 +124,7 @@
         <LocalAccounts>
           <LocalAccount wcm:action="add">
             <!-- Matches golden-image.pkr.hcl's winrm_username/winrm_password
-                 defaults - change BOTH together if you override either at
+                 defaults - change BOTH together if either is overridden at
                  build time, or Packer's WinRM communicator cannot connect.
                  Plaintext here is an autounattend.xml schema limitation,
                  not a choice this project made - see the .pkr.hcl's
