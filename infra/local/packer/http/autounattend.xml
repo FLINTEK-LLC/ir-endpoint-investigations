@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Unattended Windows 11 Enterprise (evaluation) setup for the local IR
+  golden image - see ../golden-image.pkr.hcl's header for why this exists
+  (Microsoft's eval ISOs have no scriptable download, but once you HAVE
+  one, the install itself can be fully unattended).
+
+  This is a STARTING POINT, not a vendor-verified template: Windows Setup's
+  unattended answer file schema shifts slightly between builds, and the
+  exact <ProductKey>/edition match against your specific ISO matters (an
+  evaluation ISO's setup.exe generally does not prompt for a key at all,
+  which is why none is set here - if your ISO DOES prompt, Windows Setup
+  will fall back to its interactive wizard for that one screen rather than
+  failing outright, so a mismatch here degrades gracefully rather than
+  silently).
+
+  WinRM is enabled in the specialize pass specifically so Packer's winrm
+  communicator (see golden-image.pkr.hcl) can reach the guest - a stock
+  Windows install does not have WinRM listening by default.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <UILanguage>en-US</UILanguage>
+      <SystemLocale>en-US</SystemLocale>
+      <UserLocale>en-US</UserLocale>
+      <InputLocale>en-US</InputLocale>
+    </component>
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Label>Windows</Label>
+              <Format>NTFS</Format>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <!-- Index 1 is usually the base Enterprise/Enterprise Evaluation
+                 edition on a Microsoft eval ISO, but verify against YOUR
+                 ISO's own install.wim image list (dism /Get-WimInfo) before
+                 a real build - an eval ISO occasionally ships more than one
+                 image in the same .wim. -->
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>1</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallToAvailablePartition>false</InstallToAvailablePartition>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <!-- No ProductKey element: evaluation ISOs' setup.exe does not
+             require one. If yours does, add
+             <ProductKey><Key>...</Key></ProductKey> here. -->
+      </UserData>
+    </component>
+  </settings>
+
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <ComputerName>ir-golden</ComputerName>
+      <!-- UTC, matching the cloud investigation host's own default
+           (infra\scripts\bootstrap-investigation-host.ps1 -TimeZoneId) -
+           a forensic workstation's own local clock skew should never be
+           the thing you're debugging mid-case. -->
+      <TimeZone>UTC</TimeZone>
+    </component>
+    <component name="Microsoft-Windows-TerminalServices-LocalSessionManager" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <fDenyTSConnections>false</fDenyTSConnections>
+    </component>
+    <component name="Networking-MPSSVC-Svc" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <!-- Opens the firewall for Remote Desktop AND WinRM. This is a
+           golden image reached only through VMware's own virtual network
+           (NAT by default - see infra\local\README.md), never bound to a
+           real public interface, so this is not the same exposure the
+           cloud module's SECURITY.md works hard to avoid for a
+           publicly-routable host. -->
+      <FirewallGroups>
+        <FirewallGroup wcm:action="add" wcm:keyValue="RemoteDesktop">
+          <Active>true</Active>
+          <Profile>all</Profile>
+          <Group>@FirewallAPI.dll,-28752</Group>
+        </FirewallGroup>
+      </FirewallGroups>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <!-- Matches golden-image.pkr.hcl's winrm_username/winrm_password
+                 defaults - change BOTH together if you override either at
+                 build time, or Packer's WinRM communicator cannot connect.
+                 Plaintext here is an autounattend.xml schema limitation,
+                 not a choice this project made - see the .pkr.hcl's
+                 winrm_password comment for the same caveat. -->
+            <Password>
+              <Value>ChangeMe!IR-Golden-2026</Value>
+              <PlainText>true</PlainText>
+            </Password>
+            <Group>Administrators</Group>
+            <Name>ir-analyst</Name>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>ir-analyst</Username>
+        <Password>
+          <Value>ChangeMe!IR-Golden-2026</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <LogonCount>5</LogonCount>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <!-- WinRM's own quickconfig wizard prompts interactively by
+             default; -Force is what makes it unattended. This is the step
+             that actually makes Packer's winrm communicator able to
+             connect - everything above just gets Windows itself booted
+             and logged in. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force; winrm quickconfig -quiet; Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true; Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true"</CommandLine>
+          <Description>Enable WinRM for Packer</Description>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>

@@ -34,7 +34,14 @@
     "",
     "  Source.Type PSModule installs from the PowerShell Gallery instead of",
     "  downloading a file; Source.Module is the module name. Verify.Module",
-    "  checks it is importable afterwards."
+    "  checks it is importable afterwards.",
+    "",
+    "  Source.Type / Install.Type PipVenv installs via pip into a DEDICATED",
+    "  virtual environment at <ToolsRoot>\\<Install.Dest> (python -m venv,",
+    "  then pip install <Install.Package> inside it) rather than a shared",
+    "  global pip install - see the Volatility3 entry's Why field for why.",
+    "  Needs python already on PATH; this project does not install Python",
+    "  itself. Verify.Path points at the venv's own Scripts\\<tool>.exe."
   ],
   "tools": [
     {
@@ -198,6 +205,81 @@
       },
       "Verify": {
         "Path": "notepadpp\\notepad++.exe"
+      }
+    },
+    {
+      "Name": "Volatility3",
+      "Tier": "Standard",
+      "Enabled": true,
+      "Why": "Memory forensics - parses a memory image (e.g. one collected alongside a case's file triage) for processes, network state, injected code, and more. Primarily a Python package, not a prebuilt Windows binary - Volatility Foundation ships source/wheel releases on PyPI, not a standalone .exe, unlike every other GitHubRelease entry here. The cleanest automatable install is therefore a DEDICATED VIRTUAL ENVIRONMENT (python -m venv + pip install volatility3 inside it), not a bare 'pip install' into whatever Python the host happens to have - a shared global install is exactly how a workstation ends up with a dependency conflict between this tool and some other Python-based tool added later. This needs Python 3.8+ already on the host, which Setup-Workstation.ps1 does not itself install (no other entry here needs Python) - if python is not on PATH, this install step reports that explicitly rather than failing silently.",
+      "Source": {
+        "Type": "PipVenv",
+        "Package": "volatility3"
+      },
+      "Install": {
+        "Type": "PipVenv",
+        "Dest": "volatility3",
+        "Package": "volatility3"
+      },
+      "Verify": {
+        "Path": "volatility3\\Scripts\\vol.exe"
+      }
+    },
+    {
+      "Name": "MemProcFS",
+      "Tier": "Standard",
+      "Enabled": true,
+      "Why": "Memory forensics - mounts a memory image as a navigable virtual file system (processes, modules, registry hives extracted from memory) rather than requiring a plugin invocation per artifact the way Volatility does. Complements, not replaces, Volatility3: MemProcFS is faster for quick exploration and live-mountable, Volatility3's plugin set goes deeper for a specific artifact once you know what you're looking for. A real GitHub release with prebuilt Windows binaries, unlike Volatility3.",
+      "Source": {
+        "Type": "GitHubRelease",
+        "Repo": "ufrisk/MemProcFS",
+        "AssetPattern": "^MemProcFS_files_and_binaries-win_x64-latest\\.zip$"
+      },
+      "Install": {
+        "Type": "Zip",
+        "Dest": "MemProcFS",
+        "Flatten": true
+      },
+      "Verify": {
+        "Path": "MemProcFS\\MemProcFS.exe"
+      }
+    },
+    {
+      "Name": "HashMyFiles",
+      "Tier": "Standard",
+      "Enabled": true,
+      "Why": "Quick ad-hoc hashing (MD5/SHA-1/SHA-256/CRC32) of a handful of files during review - lighter-weight than scripting Get-EvidenceManifest.ps1 for a one-off check of a single suspicious binary found mid-timeline-review. Same NirSoft direct-URL pattern as this project's existing BrowsingHistoryView/BrowserDownloadsView entries (see Get-BroaderBrowserHistory.ps1), not a GitHub release - NirSoft does not publish on GitHub.",
+      "$versionNote": "NirSoft does not version its direct download URLs - this is the current (x64) package URL as of this writing; if it 404s, check https://www.nirsoft.net/utils/hash_my_files.html for the current link.",
+      "Source": {
+        "Type": "Url",
+        "Url": "https://www.nirsoft.net/utils/hashmyfiles-x64.zip"
+      },
+      "Install": {
+        "Type": "Zip",
+        "Dest": "HashMyFiles",
+        "Flatten": true
+      },
+      "Verify": {
+        "Path": "HashMyFiles\\HashMyFiles.exe"
+      }
+    },
+    {
+      "Name": "ImHex",
+      "Tier": "Standard",
+      "Enabled": true,
+      "Why": "Hex editor with a pattern-matching language for parsing custom/undocumented binary structures found during review - carving a dropper's embedded config, inspecting a file format Timeline Explorer/Registry Explorer don't cover. Chosen over the more commonly-recommended HxD specifically for licensing: ImHex is MIT-licensed with real GitHub release binaries, consistent with how every other tool in this manifest was selected (automatable fetch from an official source, permissive enough to redistribute the fetch instructions for). HxD's license terms are more restrictive about redistribution/automated fetching assumptions, so it is NOT included here as a default entry - if you prefer HxD, install it by hand from https://mh-nexus.de/en/hxd/ instead; this manifest just doesn't automate that one.",
+      "Source": {
+        "Type": "GitHubRelease",
+        "Repo": "WerWolv/ImHex",
+        "AssetPattern": "Windows-Portable-x86_64\\.zip$"
+      },
+      "Install": {
+        "Type": "Zip",
+        "Dest": "ImHex",
+        "Flatten": true
+      },
+      "Verify": {
+        "Path": "ImHex\\imhex.exe"
       }
     },
     {

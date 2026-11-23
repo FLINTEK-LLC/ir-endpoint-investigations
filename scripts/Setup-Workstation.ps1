@@ -145,6 +145,12 @@ function Resolve-ToolDownload {
             # Nothing to download - Install-Module does its own fetching.
             return [pscustomobject]@{ Url = "psgallery:$($Tool.Source.Module)"; Version = 'latest'; FileName = $null }
         }
+        'PipVenv' {
+            # Nothing to download here either - pip does its own fetching,
+            # same reasoning as PSModule above. See the Install.Type
+            # 'PipVenv' case below for what actually happens.
+            return [pscustomobject]@{ Url = "pip:$($Tool.Source.Package)"; Version = 'latest'; FileName = $null }
+        }
         default { throw "Unknown Source.Type" }
     }
 }
@@ -165,7 +171,7 @@ foreach ($t in $selected) {
 
 if ($plan.Count -gt 0 -and -not $DryRun) {
     Write-Host "Downloading $($plan.Count) tool(s) in parallel..."
-    $jobs = foreach ($item in ($plan | Where-Object { $_.Tool.Source.Type -ne 'PSModule' })) {
+    $jobs = foreach ($item in ($plan | Where-Object { $_.Tool.Source.Type -notin @('PSModule', 'PipVenv') })) {
         Start-Job -ScriptBlock {
             param($Url, $Path)
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -183,7 +189,7 @@ foreach ($item in $plan) {
         continue
     }
     try {
-        if ($t.Install.Type -ne 'PSModule' -and -not (Test-Path -LiteralPath $item.Path)) { throw "download did not produce $($item.FileName)" }
+        if ($t.Install.Type -notin @('PSModule', 'PipVenv') -and -not (Test-Path -LiteralPath $item.Path)) { throw "download did not produce $($item.FileName)" }
         switch ($t.Install.Type) {
             'Msi' {
                 $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList "/i `"$($item.Path)`" /quiet /norestart" -Wait -PassThru
@@ -217,6 +223,22 @@ foreach ($item in $plan) {
                 }
                 Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
                 Install-Module -Name $t.Source.Module -Scope AllUsers -Force -AllowClobber -ErrorAction Stop
+            }
+            'PipVenv' {
+                # A dedicated venv per tool, not a shared global pip install -
+                # see this entry's own Why field in workstation-tools.json for
+                # the dependency-conflict reasoning. python must already be on
+                # PATH; this project does not install Python itself, since no
+                # other tool here needs it.
+                $python = Get-Command python -ErrorAction SilentlyContinue
+                if (-not $python) { throw "python not found on PATH - install Python 3.8+ first (https://www.python.org/downloads/), then re-run Setup-Workstation.ps1" }
+                $dest = Join-Path $ToolsRoot $t.Install.Dest
+                if (-not (Test-Path -LiteralPath (Join-Path $dest 'Scripts\python.exe'))) {
+                    & $python.Source -m venv $dest
+                    if ($LASTEXITCODE -ne 0) { throw "python -m venv exited $LASTEXITCODE" }
+                }
+                & (Join-Path $dest 'Scripts\pip.exe') install --upgrade pip $t.Install.Package
+                if ($LASTEXITCODE -ne 0) { throw "pip install $($t.Install.Package) exited $LASTEXITCODE" }
             }
             default { throw "Unknown Install.Type" }
         }

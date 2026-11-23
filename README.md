@@ -454,6 +454,10 @@ infra/
   README.md                  Disposable per-case cloud investigation host + evidence
                               storage (AWS and Azure) - TUI-driven, see
                               "Cloud IR infrastructure" below
+  local/
+    README.md                 On-premises investigation host (VMware Workstation) -
+                              one golden VM, revert-to-snapshot per case, no cloud
+                              account needed. See "Local IR infrastructure" below
 ```
 
 ## Live system state at collection time
@@ -488,6 +492,25 @@ the host ever, and built to be handed to a partner organization to stand
 up in their own cloud account - see [`infra/README.md`](infra/README.md)
 for accounts/setup and [`infra/SECURITY.md`](infra/SECURITY.md) for the
 security model.
+
+## Local IR infrastructure
+
+No cloud account, or the case needs to stay entirely on-premises?
+[`infra/local/`](infra/local/) provides the same disposable-investigation-
+host idea on a single VMware Workstation installation instead: a golden
+analyst VM is built once with Packer (Windows, this project's own
+`Setup-Workstation.ps1` already baked in), and every case reverts that one
+VM to a clean snapshot rather than destroying/recreating it the way the
+cloud module does - there's no cloud API to spin up an arbitrary number of
+hosts from, so snapshot-revert is the local equivalent of "always a clean
+slate." A case's evidence is mounted into the guest as a read-only VMware
+shared folder, the same read-only posture the cloud module's investigation-
+host role uses. TUI-driven via `Start-LocalConsole.ps1`, same menu
+philosophy as the cloud console - see
+[`infra/local/README.md`](infra/local/README.md) for the full design and
+trade-offs, and [`infra/local/TESTING.md`](infra/local/TESTING.md) for a
+from-zero walkthrough (install VMware Workstation + Packer, get a Windows
+evaluation ISO, build the golden image, run a case end to end).
 
 ## Updating and maintaining this module
 
