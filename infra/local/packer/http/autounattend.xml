@@ -214,36 +214,66 @@
              commands rather than one long CommandLine (undocumented but
              real-world safer length ceiling), each logging its own
              success/failure to C:\Windows\Temp\packer-winrm.log so a
-             future failure is at least visible instead of silent. -->
+             future failure is at least visible instead of silent.
+
+             Three issues found and fixed here by direct troubleshooting
+             on a real build, each confirmed necessary:
+             1. AllowUnencrypted reverting to FALSE after being explicitly
+                set true, every time - a local-policy-equivalent registry
+                value (HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\
+                Service\AllowUnencryptedTraffic) takes precedence over the
+                WSMan:\ provider setting and gets re-applied on every
+                WinRM service start/reload. Must be set via reg add, not
+                just Set-Item, or it silently reverts.
+             2. A fresh NAT adapter defaults to the Public network
+                location, which affects more than just PSRemoting's own
+                auto-config restriction (-SkipNetworkProfileCheck only
+                covers that one check) - explicitly set the connection
+                category to Private.
+             3. Large file transfers over WinRM (e.g. Packer's own
+                VMware-Tools-ISO upload step) can fail with "An existing
+                connection was forcibly closed by the remote host" against
+                WinRM's small default shell memory/timeout quotas - raise
+                them explicitly. -->
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
           <CommandLine>cmd.exe /c echo %DATE% %TIME% start &gt;&gt; C:\Windows\Temp\packer-winrm.log &amp; reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f &gt;&gt; C:\Windows\Temp\packer-winrm.log 2&gt;&amp;1</CommandLine>
-          <Description>Allow local admin remote auth (step 1/4)</Description>
+          <Description>Allow local admin remote auth (step 1/6)</Description>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add">
           <Order>2</Order>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Enable-PSRemoting -SkipNetworkProfileCheck -Force *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
-          <Description>Enable PS Remoting (step 2/4)</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
+          <Description>Set network location to Private (step 2/6)</Description>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add">
           <Order>3</Order>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Get-NetFirewallRule -Name PackerWinRM -ErrorAction SilentlyContinue)) { New-NetFirewallRule -Name PackerWinRM -DisplayName 'Packer WinRM HTTP (local subnet)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5985 -Profile Any -RemoteAddress LocalSubnet } *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
-          <Description>Open WinRM firewall rule (step 3/4)</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Enable-PSRemoting -SkipNetworkProfileCheck -Force *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
+          <Description>Enable PS Remoting (step 3/6)</Description>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add">
           <Order>4</Order>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Service WinRM -StartupType Automatic; Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true; Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true; Restart-Service WinRM; 'WinRM configured OK' *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
-          <Description>Configure and restart WinRM (step 4/5)</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Get-NetFirewallRule -Name PackerWinRM -ErrorAction SilentlyContinue)) { New-NetFirewallRule -Name PackerWinRM -DisplayName 'Packer WinRM HTTP (local subnet)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5985 -Profile Any -RemoteAddress LocalSubnet } *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
+          <Description>Open WinRM firewall rule (step 4/6)</Description>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add">
           <Order>5</Order>
+          <CommandLine>cmd.exe /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service" /v AllowUnencryptedTraffic /t REG_DWORD /d 1 /f &gt;&gt; C:\Windows\Temp\packer-winrm.log 2&gt;&amp;1</CommandLine>
+          <Description>Force-allow unencrypted WinRM via policy key, not just WSMan provider (step 5/6)</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>6</Order>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Service WinRM -StartupType Automatic; Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true; Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true; winrm set winrm/config/winrs '@{MaxMemoryPerShellMB=\"2048\"}'; winrm set winrm/config '@{MaxTimeoutms=\"1800000\"}'; Restart-Service WinRM; 'WinRM configured OK' *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
+          <Description>Configure WinRM (auth, quotas for large transfers) and restart (step 6/6)</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>7</Order>
           <!-- LogonCount=1 already limits AutoLogon to this one boot, but
                Windows can still leave the plaintext DefaultPassword value
                behind in the registry - clear it explicitly rather than
                leaving a credential remnant sitting there. Not required for
                WinRM to work, so it runs last/non-blocking. -->
           <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$k='HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'; Set-ItemProperty $k -Name AutoLogonCount -Value 0 -ErrorAction SilentlyContinue; Set-ItemProperty $k -Name AutoAdminLogon -Value '0' -ErrorAction SilentlyContinue; Remove-ItemProperty $k -Name DefaultPassword -ErrorAction SilentlyContinue"</CommandLine>
-          <Description>Clear AutoLogon credential remnant (step 5/5, non-blocking)</Description>
+          <Description>Clear AutoLogon credential remnant (step 7/7, non-blocking)</Description>
         </SynchronousCommand>
       </FirstLogonCommands>
     </component>
