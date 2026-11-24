@@ -155,28 +155,28 @@
         </RunSynchronousCommand>
         <RunSynchronousCommand wcm:action="add">
           <Order>2</Order>
-          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</Path>
-          <Description>Set network location to Private</Description>
+          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private -ErrorAction Stop *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log' } catch { $_ | Out-File -Append 'C:\Windows\Temp\packer-winrm.log' }; exit 0"</Path>
+          <Description>Set network location to Private (never fails the install)</Description>
         </RunSynchronousCommand>
         <RunSynchronousCommand wcm:action="add">
           <Order>3</Order>
-          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Enable-PSRemoting -SkipNetworkProfileCheck -Force *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</Path>
-          <Description>Enable PS Remoting</Description>
+          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { Enable-PSRemoting -SkipNetworkProfileCheck -Force -ErrorAction Stop *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log' } catch { $_ | Out-File -Append 'C:\Windows\Temp\packer-winrm.log' }; exit 0"</Path>
+          <Description>Enable PS Remoting (never fails the install)</Description>
         </RunSynchronousCommand>
         <RunSynchronousCommand wcm:action="add">
           <Order>4</Order>
-          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; &amp; { if (-not (Get-NetFirewallRule -Name PackerWinRM -ErrorAction SilentlyContinue)) { New-NetFirewallRule -Name PackerWinRM -DisplayName 'Packer WinRM HTTP (local subnet)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5985 -Profile Any -RemoteAddress LocalSubnet } } *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</Path>
-          <Description>Open WinRM firewall rule</Description>
+          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { if (-not (Get-NetFirewallRule -Name PackerWinRM -ErrorAction SilentlyContinue)) { New-NetFirewallRule -Name PackerWinRM -DisplayName 'Packer WinRM HTTP (local subnet)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5985 -Profile Any -RemoteAddress LocalSubnet -ErrorAction Stop *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log' } } catch { $_ | Out-File -Append 'C:\Windows\Temp\packer-winrm.log' }; exit 0"</Path>
+          <Description>Open WinRM firewall rule (never fails the install)</Description>
         </RunSynchronousCommand>
         <RunSynchronousCommand wcm:action="add">
           <Order>5</Order>
-          <Path>cmd.exe /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service" /v AllowUnencryptedTraffic /t REG_DWORD /d 1 /f &gt;&gt; C:\Windows\Temp\packer-winrm.log 2&gt;&amp;1</Path>
+          <Path>cmd.exe /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service" /v AllowUnencryptedTraffic /t REG_DWORD /d 1 /f &gt;&gt; C:\Windows\Temp\packer-winrm.log 2&gt;&amp;1 &amp; exit 0</Path>
           <Description>Force-allow unencrypted WinRM via policy key, not just WSMan provider</Description>
         </RunSynchronousCommand>
         <RunSynchronousCommand wcm:action="add">
           <Order>6</Order>
-          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; &amp; { Set-Service WinRM -StartupType Automatic; Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true; Set-Item WSMan:\localhost\Service\Auth\Basic -Value $false; Set-Item WSMan:\localhost\Shell\MaxMemoryPerShellMB -Value 2048; Set-Item WSMan:\localhost\MaxTimeoutms -Value 1800000; Restart-Service WinRM } *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</Path>
-          <Description>Configure WinRM quotas; leave Basic auth disabled until first logon</Description>
+          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { Set-Service WinRM -StartupType Automatic -ErrorAction Stop; Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true -ErrorAction Stop; Set-Item WSMan:\localhost\Service\Auth\Basic -Value $false -ErrorAction Stop; Set-Item WSMan:\localhost\Shell\MaxMemoryPerShellMB -Value 2048 -ErrorAction Stop; Set-Item WSMan:\localhost\MaxTimeoutms -Value 1800000 -ErrorAction Stop; Restart-Service WinRM -ErrorAction Stop; 'WinRM configured OK' *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log' } catch { $_ | Out-File -Append 'C:\Windows\Temp\packer-winrm.log' }; exit 0"</Path>
+          <Description>Configure WinRM quotas; leave Basic auth disabled until first logon (never fails the install)</Description>
         </RunSynchronousCommand>
       </RunSynchronous>
     </component>
