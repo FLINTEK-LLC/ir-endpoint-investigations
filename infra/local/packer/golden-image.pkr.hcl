@@ -177,6 +177,7 @@ source "vmware-iso" "golden" {
 
   // Render at build time, keeping account/key settings in one place.
   floppy_content = {
+    "packer-winrm.ps1" = file("${path.root}/scripts/packer-winrm.ps1")
     "autounattend.xml" = templatefile("http/autounattend.xml", merge(local.unattend_values, {
       windows_partition_mb = local.windows_partition_mb
     }))
@@ -184,9 +185,9 @@ source "vmware-iso" "golden" {
 
   // Set firmware explicitly through VMX. Must match the GPT/ESP layout
   // in autounattend.xml; no guest-profile-dependent firmware default.
-  // EFI's Windows Boot Manager entry is created by Setup in NVRAM - no
-  // vmx-level boot-order key is needed or honored under EFI firmware
-  // (bios.bootOrder only applies to legacy BIOS and was removed here).
+  // Setup creates Windows Boot Manager in the VM's persistent .nvram file
+  // (the pinned builder already sets nvram = "<vm_name>.nvram"). Leave
+  // EFI BootOrder to Setup; bios.bootOrder controls legacy BIOS only.
   vmx_data = {
     "firmware"                = "efi"
     "uefi.secureBoot.enabled" = "FALSE"
