@@ -35,12 +35,12 @@ packer {
 
 variable "iso_url" {
   type        = string
-  description = "Local path or URL to the EFI no-prompt Windows 11 Pro ISO produced by scripts/New-NoPromptWindowsIso.ps1. See ../TESTING.md step 3; the stock ISO requires keyboard input."
+  description = "Local path or URL to the Windows 11 Pro ISO. No default on purpose - see the file header comment for why this can't be fetched automatically."
 }
 
 variable "iso_checksum" {
   type        = string
-  description = "e.g. sha256:<hash>. Compute it from the REMASTERED no-prompt ISO (Get-FileHash -Algorithm SHA256) - Microsoft's download page does not reliably publish one next to the ISO."
+  description = "e.g. sha256:<hash>. Compute it yourself after downloading (Get-FileHash -Algorithm SHA256) - Microsoft's download page does not reliably publish one next to the ISO."
 }
 
 variable "product_key" {
@@ -155,9 +155,15 @@ source "vmware-iso" "golden" {
   memory        = var.memory_mb
   cpus          = var.cpus
   guest_os_type = "windows9-64" # Workstation's internal id for Windows 10/11 64-bit guests.
-  // Avoid the reported Workstation vmrun start ... gui hang (upstream #280).
-  // Open the running VM in Workstation to inspect Setup when needed.
-  headless = true
+  // Visible while building - needed for boot_command keystrokes to reach
+  // the guest at all (see the boot_command comment below). A `vmrun start
+  // ... gui` hang (upstream packer-plugin-vmware#280) was the actual cause
+  // of an earlier "stuck at Powering on virtual machine" failure, NOT
+  // anything about this flag or EFI firmware - that hang only reproduces
+  // when VMware Workstation's own application isn't already running
+  // before `packer build` starts. Launch Workstation yourself first (see
+  // TESTING.md) rather than going headless to work around it.
+  headless = false
   version  = 19 // Supported by Workstation 17.6+ (version 19 originated with Workstation 16.2).
   // E1000E has an inbox Windows driver: WinRM must work BEFORE Tools can
   // be uploaded. Packer does not automatically install VMware Tools.
@@ -186,12 +192,27 @@ source "vmware-iso" "golden" {
     "uefi.secureBoot.enabled" = "FALSE"
   }
 
-  // Require the no-prompt EFI ISO from scripts/New-NoPromptWindowsIso.ps1.
-  // The El Torito EFI boot entry uses efisys_noprompt.bin, so Setup starts
-  // without keyboard input. Do not tune boot timing or inject keys into Setup.
-  // disable_vnc skips both VNC connection and boot-command steps in v2.1.7.
-  disable_vnc  = true
-  boot_command = []
+  // The ISO's "Press any key to boot from CD or DVD" prompt has a very
+  // short accept-window (observed: a couple seconds), and it starts
+  // essentially as soon as the VM begins booting. Minimal boot_wait, then
+  // dense, closely-spaced keystrokes starting almost immediately, so SOME
+  // keystroke lands inside the brief window regardless of exactly when it
+  // opens (varies with host boot speed). IMPORTANT PREREQUISITE: VMware
+  // Workstation's own application must already be running before
+  // `packer build` starts, or `vmrun start ... gui` can hang indefinitely
+  // at "Powering on virtual machine" before ever reaching VNC/boot_command
+  // at all (upstream packer-plugin-vmware#280) - no boot_command tuning
+  // fixes that, only launching Workstation first does. See TESTING.md.
+  boot_wait = "1s"
+  boot_command = [
+    "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>",
+    "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>",
+    "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>",
+    "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>",
+    "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>",
+    "<enter><wait1>", "<enter><wait1>", "<enter><wait1>", "<enter><wait1>",
+    "<enter><wait1>", "<enter><wait1>", "<enter><wait1>", "<enter><wait1>",
+  ]
 
   // Uploading an ISO is not installing Tools; the first provisioner below
   // installs it. Workstation's windows.iso must be present on the host.
