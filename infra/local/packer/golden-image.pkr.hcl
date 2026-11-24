@@ -177,7 +177,6 @@ source "vmware-iso" "golden" {
 
   // Render at build time, keeping account/key settings in one place.
   floppy_content = {
-    "packer-winrm.ps1" = file("${path.root}/scripts/packer-winrm.ps1")
     "autounattend.xml" = templatefile("http/autounattend.xml", merge(local.unattend_values, {
       windows_partition_mb = local.windows_partition_mb
     }))
