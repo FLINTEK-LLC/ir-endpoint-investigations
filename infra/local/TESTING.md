@@ -30,6 +30,16 @@ If it prints `False`, Workstation installed somewhere else - find it and
 pass `-VmrunPath` to every script in this module from here on, or add it
 to `PATH`.
 
+**Launch VMware Workstation's main application window now, and leave it
+running for every `packer build` from here on.** This is a real,
+confirmed prerequisite, not a suggestion: `vmrun start <vmx> gui` (which
+is what `headless = false` below triggers) can hang indefinitely at
+"Powering on virtual machine..." - never reaching VNC or `boot_command`
+at all - if Workstation's own app isn't already open when Packer starts
+it (a known upstream issue, packer-plugin-vmware#280). This is NOT a
+boot_command timing problem and no amount of retuning `boot_wait`/
+keystroke spacing fixes it; only having Workstation already running does.
+
 ## 2. Install Packer
 
 ```powershell
@@ -48,12 +58,22 @@ packer init golden-image.pkr.hcl
 
 Download the ISO from
 [Microsoft's official download page](https://www.microsoft.com/software-download/windows11),
-then create an **EFI no-prompt variant** once per downloaded ISO. Install the
-[Windows ADK](https://learn.microsoft.com/en-us/windows-hardware/get-started/adk-install)
-with **Deployment Tools** selected (`oscdimg.exe`). The WinPE add-on is not
-needed: the helper uses `efi\microsoft\boot\efisys_noprompt.bin` from your
-source ISO, keeping its boot files matched to that Windows release. Run in
-Windows PowerShell (elevate if mounting an ISO requires it on your host):
+then compute its checksum:
+
+```powershell
+Get-FileHash -Algorithm SHA256 -LiteralPath C:\Downloads\Win11_Pro.iso
+```
+
+Keep the `.iso` path and the hash - `iso_url` and `iso_checksum` are
+required Packer variables with no default. As long as VMware Workstation
+is already running (step 1 above), the stock ISO's boot prompt gets
+caught automatically by `boot_command` - no ISO modification needed.
+
+**Optional fallback**: if keeping Workstation open still doesn't reliably
+catch the boot prompt on your machine, `scripts/New-NoPromptWindowsIso.ps1`
+remasters the ISO to skip the prompt entirely (requires the
+[Windows ADK](https://learn.microsoft.com/en-us/windows-hardware/get-started/adk-install)'s
+Deployment Tools for `oscdimg.exe`):
 
 ```powershell
 cd ir-endpoint-investigations\infra\local\packer
@@ -63,17 +83,9 @@ cd ir-endpoint-investigations\infra\local\packer
 Get-FileHash -Algorithm SHA256 -LiteralPath C:\Downloads\Win11_Pro-noprompt.iso
 ```
 
-The helper prints `iso_url` and `iso_checksum`; use those **remastered** values
-in step 5. It needs free space for one additional ISO, refuses existing output,
-and dismounts only a source it mounted itself. Supply `-OscdimgPath` if the ADK
-is installed outside its default location. If the source lacks the no-prompt
-boot image, it stops; use original Microsoft x64 media containing that image.
-The output is EFI-only, with a new El Torito boot catalog referencing the
-no-prompt image. Renaming/replacing `efisys.bin` inside an ISO without rebuilding
-the boot catalog does not accomplish this. The input ISO is read-only.
-
-Keep the new `.iso` path and hash: `iso_url` and `iso_checksum` are required
-Packer variables with no default. Do not use the original download's hash.
+Use the printed `iso_url`/`iso_checksum` from that output in step 5
+instead of the stock ISO's if you go this route. This is a fallback, not
+the default path - most builds shouldn't need it.
 
 No product key needed to get started: `product_key` defaults to
 Microsoft's own publicly-documented generic KMS client setup key for
@@ -97,7 +109,7 @@ everything except the KAPE-coupled parsing toolchain, and
 ```powershell
 cd ir-endpoint-investigations\infra\local\packer
 packer build `
-  -var "iso_url=C:\Downloads\Win11_Pro-noprompt.iso" `
+  -var "iso_url=C:\Downloads\Win11_Pro.iso" `
   -var "iso_checksum=sha256:<the hash from step 3>" `
   -var "winrm_password=<at least 12 characters, Windows complexity rules apply>" `
   -var "kape_zip_path=C:\Downloads\kape.zip" `
@@ -113,14 +125,16 @@ provisioner from Workstation's own bundled `windows.iso`; if your
 Workstation install doesn't ship one, pass
 `-var "vmware_tools_iso_path=C:\path\to\windows.iso"`.)
 
-Expect this to take the better part of an hour - mostly unattended
-Windows Setup time, then `Setup-Workstation.ps1 -Tier All` fetching the
-full analyst toolset inside the guest. Open the running VM in Workstation to inspect its console (the
-template starts it headless via `vmrun ... nogui`) - if Windows Setup stalls on a screen
-rather than proceeding, `http/autounattend.xml` needs a tweak for the
-specific ISO build (see that file's `/IMAGE/NAME` setting, the most
-common mismatch - credentials/product key/computer name are templated
-from Packer variables now, not hand-edited in this file).
+**Make sure VMware Workstation's own application window is already open**
+(step 1) before running this - see that step's note on why. Expect this
+to take the better part of an hour - mostly unattended Windows Setup
+time, then `Setup-Workstation.ps1 -Tier All` fetching the full analyst
+toolset inside the guest. Watch the VM's own window (this template does
+not run headless) - if Windows Setup stalls on a screen rather than
+proceeding, `http/autounattend.xml` needs a tweak for the specific ISO
+build (see that file's `/IMAGE/NAME` setting, the most common mismatch -
+credentials/product key/computer name are templated from Packer
+variables now, not hand-edited in this file).
 
 **What to check when it finishes:** Packer reports a build success and
 leaves `output-ir-golden\ir-golden.vmx` powered off. If it instead times
@@ -128,79 +142,30 @@ out waiting for WinRM, the most common cause is `autounattend.xml`'s
 `FirstLogonCommands` WinRM-enable step not having run yet - open the VM's
 console window and check whether Windows actually finished OOBE sign-in.
 
-### EFI boot investigation and host acceptance check
+### EFI boot-prompt investigation - resolved
 
-The observed regression began when EFI was pinned. Retain EFI and the matching
-GPT/ESP/MSR/Windows/Recovery layout in `http/autounattend.xml`; reverting to
-BIOS/MBR changes the installation architecture without establishing the cause.
-Four key timings failed (2s/four spaces, 5s/eight spaced spaces,
-15s/twelve alternating keys, 1s/28 dense keys). This template now requires
-no-prompt media, sends no boot keys, and sets `disable_vnc = true` so a VNC
-connection failure cannot block unattended Setup. This is an architectural
-workaround, not proof that EFI keyboard injection is universally broken.
+**Resolved.** The actual cause was confirmed by direct testing: `vmrun
+start <vmx> gui` (what `headless = false` triggers) hangs indefinitely at
+"Powering on virtual machine..." if VMware Workstation's own application
+isn't already running when Packer starts it - this matches upstream
+[issue #280](https://github.com/vmware/packer-plugin-vmware/issues/280),
+where opening Workstation first also resolved it for the original
+reporter. It is NOT an EFI-specific keyboard/VNC defect - four different
+`boot_wait`/keystroke timing configurations were tried and failed before
+this was found, and none of them could ever have worked, since the build
+never reached the VNC-connect or `boot_command` steps at all (confirmed
+against the pinned [builder source](https://github.com/vmware/packer-plugin-vmware/blob/v2.1.7/builder/vmware/common/step_run.go):
+`StepRun` prints "Powering on virtual machine..." and blocks on
+`driver.Start()` strictly before `StepVNCConnect` ever runs).
 
-Evidence and limits:
-
-- The [2.1.7 builder step order](https://github.com/vmware/packer-plugin-vmware/blob/v2.1.7/builder/vmware/iso/builder.go)
-  is power-on, VNC connect, boot wait/typing, then communicator connect.
-  [`StepRun`](https://github.com/vmware/packer-plugin-vmware/blob/v2.1.7/builder/vmware/common/step_run.go)
-  prints `Powering on virtual machine...` before synchronously calling the
-  driver. If that remains the last status, Packer has not reached keystroke
-  injection or WinRM. Increasing WinRM timeout or changing boot_wait cannot fix it.
-- [Issue #280](https://github.com/vmware/packer-plugin-vmware/issues/280)
-  reports a `vmrun start ... gui` hang, including a Workstation 17.6 report;
-  opening Workstation first worked for the reporter. Maintainers could not
-  reproduce it. `headless = true` selects `nogui` in the
-  [2.1.7 Workstation driver](https://github.com/vmware/packer-plugin-vmware/blob/v2.1.7/builder/vmware/common/driver_workstation.go),
-  avoiding that GUI launch path. Its effectiveness here still needs a host run.
-- [Issue #330](https://github.com/vmware/packer-plugin-vmware/issues/330)
-  reports boot-command failures after Workstation 17.6; investigation includes
-  VNC connection refusal and successful maintainer tests. It does not establish
-  an EFI-specific defect or a verified VMX keyboard fix.
-- The [builder documentation](https://developer.hashicorp.com/packer/integrations/vmware/vmware/latest/components/builder/iso)
-  describes VNC key injection and `disable_vnc`; it provides no EFI-specific
-  keyboard remedy. No documented Workstation 17.x VNC removal or EFI keyboard
-  restriction was found in the reviewed
-  [Workstation 17 documentation/release notes](https://techdocs2-prod.adobecqms.net/content/dam/broadcom/techdocs/us/en/pdf/vmware/desktop-hypervisors/workstation/vmware-workstation-pro-17-0.pdf).
-  The bundled 17.6 Player release notes list removal of the Enhanced Keyboard
-  driver; they do not identify it as an EFI/VNC fix or regression. Neither that
-  removal nor remote-console product changes establish that Packer's local
-  VNC channel was removed.
-- Microsoft's [Oscdimg reference](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/oscdimg-command-line-options)
-  documents El Torito boot entries, EFI platform ID, UDF and boot-file ordering.
-  A [Microsoft-hosted Q&A](https://learn.microsoft.com/en-us/answers/questions/1105230/attempting-to-make-a-noprompt-iso-for-server-2022)
-  describes using `efisys_noprompt.bin` to remove the prompt by recreating the ISO.
-  The latter is community evidence, not a VMware defect confirmation.
-
-On the actual Workstation host, enable logging before step 5:
-
-```powershell
-$env:PACKER_LOG = '1'
-$env:PACKER_LOG_PATH = Join-Path $PWD 'packer-efi.log'
-```
-
-Verify all of the following without pressing a key:
-
-1. Power-on completes and Packer reaches `Waiting for WinRM` (no VNC connect or
-   typing step). If it still hangs at power-on, inspect the logged `vmrun ...
-   nogui` invocation and Workstation logs; try starting Workstation first as in
-   #280. No-prompt media alone cannot unblock a stuck `vmrun` process.
-2. The console goes directly into WinPE/Setup, with no "Press any key" prompt.
-   If the prompt remains, verify the selected ISO and its remastered checksum.
-3. After Setup's first reboot, Windows Boot Manager on disk takes over instead
-   of restarting the no-prompt installer. This depends on Setup's EFI NVRAM boot
-   entry and must be checked on the host. If it reboots into Setup, stop the
-   build and inspect firmware boot priority; repeated Setup can wipe Disk 0.
-4. Setup selects Pro, finishes OOBE, WinRM connects, provisioning completes,
-   and the final VM is powered off. In Windows, `Get-Disk 0` reports GPT and
-   `Get-Partition -DiskNumber 0` shows the expected EFI/MSR/Windows/Recovery layout.
-
-Logs and answer-file artifacts can contain build credentials; keep them private.
-Local format/validation/XML/script checks cannot verify firmware input behavior,
-Oscdimg execution, NVRAM boot selection, or a complete Workstation installation.
-The strongest conclusion available without that run is that the reported
-power-on stall precedes injection; the exact host trigger and EFI correlation
-remain unconfirmed.
+**The fix**: launch VMware Workstation's main window before running
+`packer build` (see step 1's note), and leave `headless = false` with a
+real `boot_command` as the default - that's the setup in this repo now.
+The `headless = true` / `disable_vnc = true` / no-prompt-ISO approach
+tried earlier in this investigation was a heavier workaround for a
+problem that had a much simpler fix; it's kept as an optional fallback
+(`scripts/New-NoPromptWindowsIso.ps1`, step 3) for a machine where even
+having Workstation open doesn't help.
 
 ## 6. Take the `golden-clean` snapshot
 
