@@ -277,10 +277,20 @@ build {
   // Stage the licensed KAPE zip into the guest BEFORE Setup-Workstation.ps1
   // runs. An empty `only` list means ALL builders, so use `except` to
   // skip these provisioners when the optional zip is absent.
+  //
+  // pause_before: the preceding windows-restart provisioner already
+  // confirmed WinRM was reachable again post-reboot, but a real build
+  // still hit a bare connection-level failure ("dial tcp ... connectex")
+  // on the very next operation - VMware Tools' own install touches
+  // network components, so there can be a few more seconds of settling
+  // right after this specific reboot even once WinRM's basic check
+  // passes. A short pause here is cheap insurance against that one-off
+  // race; it does not fix a deterministic failure.
   provisioner "file" {
-    except      = var.kape_zip_path == "" ? ["vmware-iso.golden"] : []
-    source      = var.kape_zip_path
-    destination = "C:/Windows/Temp/kape.zip"
+    except       = var.kape_zip_path == "" ? ["vmware-iso.golden"] : []
+    pause_before = "30s"
+    source       = var.kape_zip_path
+    destination  = "C:/Windows/Temp/kape.zip"
   }
 
   provisioner "powershell" {
