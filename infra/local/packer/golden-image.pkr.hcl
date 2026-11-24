@@ -245,8 +245,11 @@ build {
     inline = [
       "$ErrorActionPreference = 'Stop'",
       "$iso = 'C:\\Windows\\Temp\\vmware-tools.iso'",
-      "$disk = Mount-DiskImage -ImagePath $iso -PassThru",
-      "try { $drive = ($disk | Get-Volume).DriveLetter; if (-not $drive) { throw 'VMware Tools ISO has no drive letter' }; $setup = Start-Process -FilePath ($drive + ':\\setup64.exe') -ArgumentList '/S /v\"/qn REBOOT=ReallySuppress\"' -Wait -PassThru; if ($setup.ExitCode -notin @(0, 3010)) { throw \"VMware Tools installer failed: $($setup.ExitCode)\" } } finally { Dismount-DiskImage -ImagePath $iso }",
+      "Mount-DiskImage -ImagePath $iso | Out-Null",
+      "$drive = $null",
+      "for ($i = 0; $i -lt 30 -and -not $drive; $i++) { Start-Sleep -Seconds 1; $drive = (Get-DiskImage -ImagePath $iso | Get-Volume -ErrorAction SilentlyContinue).DriveLetter }",
+      "if (-not $drive) { throw 'VMware Tools ISO did not present a usable volume within 30s of mounting - Mount-DiskImage -PassThru returning Attached=False immediately after the call is a known staleness quirk; this loop re-queries rather than trusting that first return value' }",
+      "try { $setup = Start-Process -FilePath ($drive + ':\\setup64.exe') -ArgumentList '/S /v\"/qn REBOOT=ReallySuppress\"' -Wait -PassThru; if ($setup.ExitCode -notin @(0, 3010)) { throw \"VMware Tools installer failed: $($setup.ExitCode)\" } } finally { Dismount-DiskImage -ImagePath $iso }",
       "Remove-Item -LiteralPath $iso -Force"
     ]
   }
