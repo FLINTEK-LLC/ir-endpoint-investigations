@@ -125,7 +125,9 @@ See [TESTING.md](TESTING.md) for the full walkthrough. Summary:
 
 1. Install VMware Workstation Pro, Packer, and get a Windows 11 Pro ISO
    plus product key (links above).
-2. `packer build -var iso_url=... -var iso_checksum=sha256:... -var winrm_password=... -var product_key=... [-var kape_zip_path=...] infra\local\packer\golden-image.pkr.hcl`
+2. Create an EFI no-prompt ISO with `packer\scripts\New-NoPromptWindowsIso.ps1`
+   (Windows ADK Deployment Tools required; see [TESTING.md step 3](TESTING.md#3-get-a-windows-11-pro-iso)).
+   Use its path and new SHA256 in `packer build -var iso_url=... -var iso_checksum=sha256:... -var winrm_password=... -var product_key=... [-var kape_zip_path=...] infra\local\packer\golden-image.pkr.hcl`
 3. `.\packer\scripts\New-GoldenSnapshot.ps1` - takes the `golden-clean`
    snapshot the rest of this module reverts to.
 
