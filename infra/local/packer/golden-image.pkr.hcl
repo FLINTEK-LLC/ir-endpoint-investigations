@@ -184,31 +184,27 @@ source "vmware-iso" "golden" {
     "uefi.secureBoot.enabled" = "FALSE"
   }
 
-  // The ISO's "Press any key to boot from CD or DVD" prompt has a short,
-  // host-speed-dependent window. Confirmed by direct observation: the
-  // prompt DOES appear, but scripted keystrokes were not landing in time
-  // even at boot_wait=5s - most likely because Packer sends boot_command
-  // keys over a VNC channel to the VM, and that channel itself needs time
-  // to establish before any key actually reaches the guest, on top of
-  // EFI POST/prompt-appearance timing. Pushed boot_wait much higher to
-  // guarantee the VNC connection is live before the first key fires, and
-  // extended the keystroke train significantly - both spacebar and enter,
-  // since the exact key this ISO's prompt listens for is not confirmed.
-  // This costs at most ~2 minutes against an hour-long build.
-  boot_wait = "15s"
+  // The ISO's "Press any key to boot from CD or DVD" prompt has a very
+  // short accept-window (observed: a couple seconds), and it starts
+  // essentially as soon as the VM begins booting, not after some
+  // leisurely startup delay. A LONG boot_wait before the first keystroke
+  // (previously tried: 15s) is actively wrong here - it guarantees
+  // missing the window entirely, since the prompt has already timed out
+  // and moved on to the (blank) hard disk well before any key fires.
+  // Fix: minimal boot_wait, then dense, closely-spaced keystrokes
+  // starting almost immediately and continuing for a good while, so
+  // SOME keystroke lands inside the brief window regardless of exactly
+  // when it opens (varies with host boot speed) - rather than trying to
+  // guess the one right moment to send a handful of keys.
+  boot_wait = "1s"
   boot_command = [
-    "<spacebar><wait5>",
-    "<enter><wait5>",
-    "<spacebar><wait5>",
-    "<enter><wait5>",
-    "<spacebar><wait5>",
-    "<enter><wait5>",
-    "<spacebar><wait5>",
-    "<enter><wait5>",
-    "<spacebar><wait5>",
-    "<enter><wait5>",
-    "<spacebar><wait5>",
-    "<enter><wait5>",
+    "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>",
+    "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>",
+    "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>",
+    "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>",
+    "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>", "<spacebar><wait1>",
+    "<enter><wait1>", "<enter><wait1>", "<enter><wait1>", "<enter><wait1>",
+    "<enter><wait1>", "<enter><wait1>", "<enter><wait1>", "<enter><wait1>",
   ]
 
   // Uploading an ISO is not installing Tools; the first provisioner below
