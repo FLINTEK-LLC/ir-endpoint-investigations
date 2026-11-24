@@ -168,7 +168,6 @@ source "vmware-iso" "golden" {
   cdrom_adapter_type = "sata"
 
   // Render at build time, keeping account/key settings in one place.
-  floppy_files = ["${path.root}/scripts/bootstrap-winrm.ps1"]
   floppy_content = {
     "autounattend.xml" = templatefile("http/autounattend.xml", merge(local.unattend_values, {
       windows_partition_mb = local.windows_partition_mb
@@ -177,18 +176,40 @@ source "vmware-iso" "golden" {
 
   // Set firmware explicitly through VMX. Must match the GPT/ESP layout
   // in autounattend.xml; no guest-profile-dependent firmware default.
-  // EFI's Windows Boot Manager entry is created by Setup in NVRAM; the
-  // legacy bios.bootOrder setting is not a substitute for that entry.
+  // EFI's Windows Boot Manager entry is created by Setup in NVRAM - no
+  // vmx-level boot-order key is needed or honored under EFI firmware
+  // (bios.bootOrder only applies to legacy BIOS and was removed here).
   vmx_data = {
     "firmware"                = "efi"
     "uefi.secureBoot.enabled" = "FALSE"
-    "bios.bootOrder"          = "hdd,cdrom"
   }
 
-  // Accept the ISO's initial "Press any key" prompt once. No keys are
-  // sent on subsequent Setup reboots. EFI startup speed is host-dependent.
-  boot_wait    = "2s"
-  boot_command = ["<spacebar><wait><spacebar><wait><spacebar><wait><spacebar>"]
+  // The ISO's "Press any key to boot from CD or DVD" prompt has a short,
+  // host-speed-dependent window. Confirmed by direct observation: the
+  // prompt DOES appear, but scripted keystrokes were not landing in time
+  // even at boot_wait=5s - most likely because Packer sends boot_command
+  // keys over a VNC channel to the VM, and that channel itself needs time
+  // to establish before any key actually reaches the guest, on top of
+  // EFI POST/prompt-appearance timing. Pushed boot_wait much higher to
+  // guarantee the VNC connection is live before the first key fires, and
+  // extended the keystroke train significantly - both spacebar and enter,
+  // since the exact key this ISO's prompt listens for is not confirmed.
+  // This costs at most ~2 minutes against an hour-long build.
+  boot_wait = "15s"
+  boot_command = [
+    "<spacebar><wait5>",
+    "<enter><wait5>",
+    "<spacebar><wait5>",
+    "<enter><wait5>",
+    "<spacebar><wait5>",
+    "<enter><wait5>",
+    "<spacebar><wait5>",
+    "<enter><wait5>",
+    "<spacebar><wait5>",
+    "<enter><wait5>",
+    "<spacebar><wait5>",
+    "<enter><wait5>",
+  ]
 
   // Uploading an ISO is not installing Tools; the first provisioner below
   // installs it. Workstation's windows.iso must be present on the host.
