@@ -187,9 +187,22 @@ source "vmware-iso" "golden" {
   // Setup creates Windows Boot Manager in the VM's persistent .nvram file
   // (the pinned builder already sets nvram = "<vm_name>.nvram"). Leave
   // EFI BootOrder to Setup; bios.bootOrder controls legacy BIOS only.
+  //
+  // suspend.disabled: a real build got auto-paused by Workstation mid-
+  // build (confirmed: Workstation's Auto-Suspend feature detects the
+  // GUEST's own Windows power plan entering sleep after inactivity, and
+  // converts that into a VM-level suspend requiring manual Resume) -
+  // builds here routinely run 45-60+ minutes with long guest-idle
+  // stretches (file copy, KAPE extraction), well past Windows' default
+  // sleep timeout. This VMX setting stops Workstation from ever
+  // suspending this VM regardless of the guest's power state; the
+  // guest's own power plan is also disabled via powercfg below as a
+  // second, independent layer (this is also just correct for an
+  // always-on investigation host, not only a build-time workaround).
   vmx_data = {
     "firmware"                = "efi"
     "uefi.secureBoot.enabled" = "FALSE"
+    "suspend.disabled"        = "TRUE"
   }
 
   // The ISO's "Press any key to boot from CD or DVD" prompt has a very

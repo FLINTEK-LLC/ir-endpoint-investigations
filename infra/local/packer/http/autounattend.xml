@@ -249,8 +249,8 @@
                 them explicitly. -->
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <CommandLine>cmd.exe /c echo %DATE% %TIME% start &gt;&gt; C:\Windows\Temp\packer-winrm.log &amp; reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f &gt;&gt; C:\Windows\Temp\packer-winrm.log 2&gt;&amp;1</CommandLine>
-          <Description>Allow local admin remote auth (step 1/7)</Description>
+          <CommandLine>cmd.exe /c echo %DATE% %TIME% start &gt;&gt; C:\Windows\Temp\packer-winrm.log &amp; reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f &gt;&gt; C:\Windows\Temp\packer-winrm.log 2&gt;&amp;1 &amp; powercfg /change standby-timeout-ac 0 &amp; powercfg /change standby-timeout-dc 0 &amp; powercfg /h off</CommandLine>
+          <Description>Allow local admin remote auth; disable guest sleep/hibernate (step 1/7)</Description>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add">
           <Order>2</Order>
