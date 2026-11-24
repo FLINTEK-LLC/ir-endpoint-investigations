@@ -241,18 +241,31 @@ source "vmware-iso" "golden" {
 build {
   sources = ["source.vmware-iso.golden"]
 
+  // Packer launches elevated PowerShell via Task Scheduler. Mount and install
+  // in the same local SYSTEM task, outside the WinRM logon context that
+  // returned Attached=False in previous builds. Diskpart's vdisk commands
+  // accept VHD/VHDX, not ISO. Do not substitute attach vdisk here.
   provisioner "powershell" {
+    elevated_user     = "SYSTEM"
+    elevated_password = ""
     inline = [
       "$ErrorActionPreference = 'Stop'",
       "$iso = 'C:\\Windows\\Temp\\vmware-tools.iso'",
-      "$dpScript = 'C:\\Windows\\Temp\\mount-tools.txt'",
-      "\"select vdisk file=`\"$iso`\"`nattach vdisk\" | Set-Content -LiteralPath $dpScript -Encoding ASCII",
-      "diskpart /s $dpScript | Out-Null",
-      "$drive = $null",
-      "for ($i = 0; $i -lt 30 -and -not $drive; $i++) { Start-Sleep -Seconds 1; $drive = (Get-DiskImage -ImagePath $iso | Get-Volume -ErrorAction SilentlyContinue).DriveLetter }",
-      "if (-not $drive) { throw 'VMware Tools ISO did not present a usable volume within 30s even via diskpart attach vdisk' }",
-      "try { $setup = Start-Process -FilePath ($drive + ':\\setup64.exe') -ArgumentList '/S /v\"/qn REBOOT=ReallySuppress\"' -Wait -PassThru; if ($setup.ExitCode -notin @(0, 3010)) { throw \"VMware Tools installer failed: $($setup.ExitCode)\" } } finally { \"select vdisk file=`\"$iso`\"`ndetach vdisk\" | Set-Content -LiteralPath $dpScript -Encoding ASCII; diskpart /s $dpScript | Out-Null; Remove-Item -LiteralPath $dpScript -Force -ErrorAction SilentlyContinue }",
-      "Remove-Item -LiteralPath $iso -Force"
+      "if (-not (Test-Path -LiteralPath $iso -PathType Leaf)) { throw \"VMware Tools ISO missing: $iso\" }",
+      "try {",
+      "  Mount-DiskImage -ImagePath $iso -StorageType ISO -ErrorAction Stop | Out-Null",
+      "  $drive = $null",
+      "  for ($i = 0; $i -lt 30 -and -not $drive; $i++) { $drive = Get-DiskImage -ImagePath $iso | Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter } | Select-Object -First 1 -ExpandProperty DriveLetter; if (-not $drive) { Start-Sleep -Seconds 1 } }",
+      "  if (-not $drive) { throw 'VMware Tools ISO has no drive letter after 30s in the SYSTEM scheduled task' }",
+      "  $installer = $drive + ':\\setup64.exe'",
+      "  if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw \"VMware Tools installer missing: $installer\" }",
+      "  $setup = Start-Process -FilePath $installer -ArgumentList '/S /v\"/qn REBOOT=ReallySuppress /L*v C:\\Windows\\Temp\\vmware-tools-install.log\"' -Wait -PassThru",
+      "  if ($setup.ExitCode -notin @(0, 3010)) { throw \"VMware Tools installer failed: $($setup.ExitCode); see C:\\Windows\\Temp\\vmware-tools-install.log\" }",
+      "} finally {",
+      "  if ((Get-DiskImage -ImagePath $iso -ErrorAction SilentlyContinue).Attached) { Dismount-DiskImage -ImagePath $iso -ErrorAction Stop }",
+      "}",
+      "Remove-Item -LiteralPath $iso -Force",
+      "exit 0"
     ]
   }
 
@@ -272,6 +285,7 @@ build {
   provisioner "powershell" {
     except = var.kape_zip_path == "" ? ["vmware-iso.golden"] : []
     inline = [
+      "$ErrorActionPreference = 'Stop'",
       "New-Item -ItemType Directory -Path C:\\Tools\\kape -Force | Out-Null",
       "Expand-Archive -LiteralPath C:\\Windows\\Temp\\kape.zip -DestinationPath C:\\Tools\\kape -Force",
       "Remove-Item C:\\Windows\\Temp\\kape.zip -Force"

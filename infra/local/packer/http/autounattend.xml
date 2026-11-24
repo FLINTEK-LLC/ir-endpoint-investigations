@@ -14,7 +14,8 @@
   EFI firmware is explicitly selected in the VMX. Disk 0 is the VM's only
   fixed disk; its contents are wiped. The floppy and optical media do not
   consume fixed-disk IDs. Do not attach additional hard disks during setup.
-  WinRM is configured at first logon after the local administrator exists.
+  WinRM is prepared during specialize; Basic auth is enabled at first logon
+  after the local administrator exists and AutoLogon credentials are cleared.
 -->
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
   <settings pass="windowsPE">
@@ -140,6 +141,45 @@
   </settings>
 
   <settings pass="specialize">
+    <!-- Deployment RunSynchronous really waits between commands. Modern
+         Shell-Setup FirstLogonCommands starts all entries concurrently,
+         regardless of Order. Configure the service sequentially here; enable
+         Basic only at first logon so Packer cannot connect during Setup.
+         These commands run as SYSTEM and do not need the local user yet. -->
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>cmd.exe /c echo %DATE% %TIME% start &gt;&gt; C:\Windows\Temp\packer-winrm.log &amp; reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f &gt;&gt; C:\Windows\Temp\packer-winrm.log 2&gt;&amp;1</Path>
+          <Description>Allow local admin remote auth</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</Path>
+          <Description>Set network location to Private</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Enable-PSRemoting -SkipNetworkProfileCheck -Force *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</Path>
+          <Description>Enable PS Remoting</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; &amp; { if (-not (Get-NetFirewallRule -Name PackerWinRM -ErrorAction SilentlyContinue)) { New-NetFirewallRule -Name PackerWinRM -DisplayName 'Packer WinRM HTTP (local subnet)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5985 -Profile Any -RemoteAddress LocalSubnet } } *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</Path>
+          <Description>Open WinRM firewall rule</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <Path>cmd.exe /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service" /v AllowUnencryptedTraffic /t REG_DWORD /d 1 /f &gt;&gt; C:\Windows\Temp\packer-winrm.log 2&gt;&amp;1</Path>
+          <Description>Force-allow unencrypted WinRM via policy key, not just WSMan provider</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>6</Order>
+          <Path>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; &amp; { Set-Service WinRM -StartupType Automatic; Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true; Set-Item WSMan:\localhost\Service\Auth\Basic -Value $false; Set-Item WSMan:\localhost\Shell\MaxMemoryPerShellMB -Value 2048; Set-Item WSMan:\localhost\MaxTimeoutms -Value 1800000; Restart-Service WinRM } *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</Path>
+          <Description>Configure WinRM quotas; leave Basic auth disabled until first logon</Description>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
     <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <ComputerName>${computer_name}</ComputerName>
       <!-- UTC, matching the cloud investigation host's own default
@@ -152,7 +192,7 @@
       <fDenyTSConnections>false</fDenyTSConnections>
     </component>
     <component name="Networking-MPSSVC-Svc" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-      <!-- RDP only. WinRM gets a separate rule at first logon. -->
+      <!-- RDP only. WinRM gets a separate rule during specialize. -->
       <FirewallGroups>
         <FirewallGroup wcm:action="add" wcm:keyValue="RemoteDesktop">
           <Active>true</Active>
@@ -201,79 +241,13 @@
         <LogonCount>1</LogonCount>
       </AutoLogon>
       <FirstLogonCommands>
-        <!-- Inline commands only - NOT a script read from the floppy.
-             The floppy-script approach (A:\bootstrap-winrm.ps1) failed
-             silently in practice: setupact.log showed the command being
-             REGISTERED but produced no log file and none of the script's
-             side effects (firewall rule, LocalAccountTokenFilterPolicy,
-             WSMan Basic auth) ever existed - meaning it registered but
-             never actually executed, most likely floppy-device
-             availability/timing at the exact FirstLogonCommands execution
-             point, which is not guaranteed the way a C:\ path is. Inlining
-             removes that whole dependency. Split across multiple short
-             commands rather than one long CommandLine (undocumented but
-             real-world safer length ceiling), each logging its own
-             success/failure to C:\Windows\Temp\packer-winrm.log so a
-             future failure is at least visible instead of silent.
-
-             Three issues found and fixed here by direct troubleshooting
-             on a real build, each confirmed necessary:
-             1. AllowUnencrypted reverting to FALSE after being explicitly
-                set true, every time - a local-policy-equivalent registry
-                value (HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\
-                Service\AllowUnencryptedTraffic) takes precedence over the
-                WSMan:\ provider setting and gets re-applied on every
-                WinRM service start/reload. Must be set via reg add, not
-                just Set-Item, or it silently reverts.
-             2. A fresh NAT adapter defaults to the Public network
-                location, which affects more than just PSRemoting's own
-                auto-config restriction (-SkipNetworkProfileCheck only
-                covers that one check) - explicitly set the connection
-                category to Private.
-             3. Large file transfers over WinRM (e.g. Packer's own
-                VMware-Tools-ISO upload step) can fail with "An existing
-                connection was forcibly closed by the remote host" against
-                WinRM's small default shell memory/timeout quotas - raise
-                them explicitly. -->
+        <!-- One command: remove AutoLogon credentials before allowing Packer
+             to authenticate. LogonCount=1 can cause an extra automatic logon
+             on some Windows releases; explicitly disable it here. -->
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <CommandLine>cmd.exe /c echo %DATE% %TIME% start &gt;&gt; C:\Windows\Temp\packer-winrm.log &amp; reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f &gt;&gt; C:\Windows\Temp\packer-winrm.log 2&gt;&amp;1</CommandLine>
-          <Description>Allow local admin remote auth (step 1/6)</Description>
-        </SynchronousCommand>
-        <SynchronousCommand wcm:action="add">
-          <Order>2</Order>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
-          <Description>Set network location to Private (step 2/6)</Description>
-        </SynchronousCommand>
-        <SynchronousCommand wcm:action="add">
-          <Order>3</Order>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Enable-PSRemoting -SkipNetworkProfileCheck -Force *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
-          <Description>Enable PS Remoting (step 3/6)</Description>
-        </SynchronousCommand>
-        <SynchronousCommand wcm:action="add">
-          <Order>4</Order>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Get-NetFirewallRule -Name PackerWinRM -ErrorAction SilentlyContinue)) { New-NetFirewallRule -Name PackerWinRM -DisplayName 'Packer WinRM HTTP (local subnet)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5985 -Profile Any -RemoteAddress LocalSubnet } *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
-          <Description>Open WinRM firewall rule (step 4/6)</Description>
-        </SynchronousCommand>
-        <SynchronousCommand wcm:action="add">
-          <Order>5</Order>
-          <CommandLine>cmd.exe /c reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service" /v AllowUnencryptedTraffic /t REG_DWORD /d 1 /f &gt;&gt; C:\Windows\Temp\packer-winrm.log 2&gt;&amp;1</CommandLine>
-          <Description>Force-allow unencrypted WinRM via policy key, not just WSMan provider (step 5/6)</Description>
-        </SynchronousCommand>
-        <SynchronousCommand wcm:action="add">
-          <Order>6</Order>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Service WinRM -StartupType Automatic; Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true; Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true; winrm set winrm/config/winrs '@{MaxMemoryPerShellMB=\"2048\"}'; winrm set winrm/config '@{MaxTimeoutms=\"1800000\"}'; Restart-Service WinRM; 'WinRM configured OK' *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
-          <Description>Configure WinRM (auth, quotas for large transfers) and restart (step 6/6)</Description>
-        </SynchronousCommand>
-        <SynchronousCommand wcm:action="add">
-          <Order>7</Order>
-          <!-- LogonCount=1 already limits AutoLogon to this one boot, but
-               Windows can still leave the plaintext DefaultPassword value
-               behind in the registry - clear it explicitly rather than
-               leaving a credential remnant sitting there. Not required for
-               WinRM to work, so it runs last/non-blocking. -->
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$k='HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'; Set-ItemProperty $k -Name AutoLogonCount -Value 0 -ErrorAction SilentlyContinue; Set-ItemProperty $k -Name AutoAdminLogon -Value '0' -ErrorAction SilentlyContinue; Remove-ItemProperty $k -Name DefaultPassword -ErrorAction SilentlyContinue"</CommandLine>
-          <Description>Clear AutoLogon credential remnant (step 7/7, non-blocking)</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "&amp; { $ErrorActionPreference='Stop'; $k='HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'; Set-ItemProperty $k -Name AutoLogonCount -Value 0; Set-ItemProperty $k -Name AutoAdminLogon -Value '0'; Remove-ItemProperty $k -Name DefaultPassword -ErrorAction SilentlyContinue; Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true; 'WinRM configured OK' } *&gt;&gt; 'C:\Windows\Temp\packer-winrm.log'"</CommandLine>
+          <Description>Clear AutoLogon credentials and enable Packer WinRM authentication</Description>
         </SynchronousCommand>
       </FirstLogonCommands>
     </component>
