@@ -167,94 +167,38 @@ problem that had a much simpler fix; it's kept as an optional fallback
 (`scripts/New-NoPromptWindowsIso.ps1`, step 3) for a machine where even
 having Workstation open doesn't help.
 
-### Failure on Setup's first automatic reboot
+### Reverted: moving WinRM bootstrap into specialize caused a new failure
 
-The observed failure was the "computer restarted unexpectedly" dialog
-after partitioning and image application, on Setup's first automatic
-reboot. Returning zero from every PowerShell command did not resolve it.
-This is separate from the initial CD boot prompt discussed above.
+An earlier revision of this file moved the WinRM bootstrap commands
+(network profile, PSRemoting, firewall rule, WinRM service/quota config)
+out of `FirstLogonCommands` and into the `specialize` pass, after a
+Codex review found a real, Microsoft-documented defect: three of those
+commands exceeded `RunSynchronousCommand`'s 259-character `Path` limit.
+That specific length-limit fix was real and correct on its own, but the
+larger redesign it was bundled with was not: running `specialize`
+caused a confirmed real build to stall mid-install (Setup's progress
+stuck around 58%, with an idle PowerShell window sitting open) -
+`Enable-PSRemoting`/`Restart-Service WinRM` apparently don't reliably
+complete that early in `specialize`, before the OS is fully settled.
 
-A fresh review found a concrete answer-file defect:
-[Deployment RunSynchronous `Path` has a 259-character maximum](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-deployment-runsynchronous-runsynchronouscommand-path).
-The old specialize commands numbered 2, 4, and 6 were respectively 277,
-473, and 622 characters after XML decoding. These settings are consumed
-at specialize, after the image boots; an invalid command setting cannot
-be repaired by `try/catch` inside that command. This is a plausible cause
-at the reported boundary, **not a confirmed explanation of the dialog**
-without the failed guest's logs or a successful repeat build.
+**Reverted back to the proven design**: everything runs in
+`FirstLogonCommands` again (the same structure that got WinRM connected
+successfully in an earlier real build - it only later failed on an
+unrelated VMware Tools provisioner bug, never on this). `specialize`
+now only sets the computer name/timezone/RDP firewall group - nothing
+that can stall Setup. If `RunSynchronousCommand`'s 259-character limit
+ever needs revisiting (e.g. more bootstrap logic gets added later),
+stage a real `.ps1` file via `floppy_content` and invoke it with a short
+launcher from `FirstLogonCommands`, not from `specialize` - keep the
+length fix, don't repeat the phase move that caused the stall.
 
-Packer now puts `packer-winrm.ps1` on its virtual floppy. A 71-character
-specialize command copies it from `A:` to `C:\Windows\Temp`, then a
-106-character command runs its specialize phase. The sequential WinRM
-operations, nonfatal error handling, and delayed Basic authentication
-remain in place, with timestamped start/completion records for each step
-in `C:\Windows\Temp\packer-winrm.log`. The first-logon launcher is also
-106 characters. Its previous 463-character form fit the XML setting's
-1024-character allowance but exceeded the underlying RunOnce limit
-described in [Broadcom KB 314677](https://knowledge.broadcom.com/external/article/314677/fail-to-apply-vm-customization-specifica.html).
-That second defect concerns later WinRM availability, not the first reboot.
-
-Other candidate findings:
-
-- **EFI/NVRAM:** the pinned [v2.1.7 VMX generator](https://github.com/vmware/packer-plugin-vmware/blob/v2.1.7/builder/vmware/iso/step_create_vmx.go)
-  already writes `nvram = "<name>.nvram"`; its
-  [cleanup code](https://github.com/vmware/packer-plugin-vmware/blob/v2.1.7/builder/vmware/common/driver.go)
-  retains `.nvram`. Setup's own guest reboot does not rerun VM creation.
-  This refutes a missing NVRAM filename in the template; it cannot prove
-  the failed VM's boot entry was actually saved. Broadcom's current
-  [boot-order article](https://knowledge.broadcom.com/external/article/326326/)
-  describes EFI overrides through ESXi/PowerCLI. It does not establish a
-  required VMX setting for Workstation 17.6. The previous blanket comment
-  that no VMX boot-order key works with EFI has been narrowed; no boot-order
-  override has been added.
-- **Service restart/crash:** [Microsoft's Windows PowerShell documentation](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/enable-psremoting?view=powershell-5.1)
-  explicitly says `Enable-PSRemoting` restarts WinRM. Neither that service
-  restart nor `Restart-Service WinRM` requests a machine reboot. No
-  documented specialize-specific crash incompatibility was found. This
-  does not exclude a guest bugcheck; retain these operations and use the
-  per-step log plus crash evidence rather than claim they caused one.
-- **Disk/image:** ESP 300 MiB/FAT32, MSR 16 MiB, Windows partition 3/NTFS,
-  and trailing Recovery/NTFS with the WinRE type GUID agree with the
-  [documented UEFI layout](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/configure-uefigpt-based-hard-drive-partitions).
-  `InstallTo` selects partition 3. No layout mismatch explaining this
-  reboot was found. Recovery GPT attributes/WinRE registration still
-  require inspection in a completed guest; the partition type alone
-  does not demonstrate that recovery is fully configured.
-- **LabConfig:** the registry writes target the live WinPE SYSTEM hive,
-  not the installed OS's offline hive. They are not a persistence
-  mechanism across reboot. No supported Microsoft contract for those
-  bypasses or evidence of a second-boot requirements rejection was found;
-  copying them into the installed hive would be speculative. They also
-  cannot supply CPU instructions absent from the host.
-
-For the next real build, verify the VM gets past this reboot, completes
-OOBE, and Packer connects. Packer validation checks the HCL/plugin
-configuration, **not** the Windows answer-file schema or guest behavior.
-Windows SIM against the actual ISO's image/catalog is the schema check.
-
-If the same dialog remains, leave it open and press Shift+F10. Before
-restarting or rebuilding, inspect/preserve:
+If `FirstLogonCommands` ever fails outright, before rebuilding, leave
+the VM open, press Shift+F10, and check:
 
 ```bat
-echo %SystemRoot%
-bcdedit /enum {fwbootmgr}
-notepad C:\Windows\Panther\setuperr.log
 notepad C:\Windows\Panther\setupact.log
 notepad C:\Windows\Temp\packer-winrm.log
 ```
-
-Also retain `C:\Windows\Panther\UnattendGC`,
-`C:\Windows\INF\setupapi.dev.log`, any `C:\Windows\MEMORY.DMP` or
-`C:\Windows\Minidump` files, the System event log, and the VM's
-`vmware.log`, `.vmx`, and `.nvram` files. `%SystemRoot%` and the Setup logs
-help establish whether this is installed Windows or booted installation
-media; firmware entries show configured order, not proof of the entry
-actually used. Panther errors can identify answer-file rejection, while
-the last bootstrap start/completion record narrows a command crash or
-hang. Dumps/events are needed to establish an actual unexpected reset.
-See [Microsoft's deployment troubleshooting guidance](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/deployment-troubleshooting-and-log-files?view=windows-11)
-for the phase-specific logs. Do not force Setup's completion registry
-state to suppress the dialog; that would conceal the failure.
 
 ## 6. Take the `golden-clean` snapshot
 
