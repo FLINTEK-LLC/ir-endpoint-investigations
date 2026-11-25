@@ -80,7 +80,13 @@ function Install-KapeFromZip {
 
     $staging = Join-Path $env:TEMP ('kape-extract-' + [guid]::NewGuid().ToString('N'))
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $staging -Force
+    # A real KAPE zip can contain more than one file named kape.exe (a
+    # nested/decoy copy a few directories deeper) - -Recurse's enumeration
+    # order is not guaranteed shallowest-first, so a bare "Select -First 1"
+    # can pick the wrong one. Sort by path depth ascending and take that
+    # one instead, so the real top-level installer is always chosen.
     $exe = Get-ChildItem -LiteralPath $staging -Filter 'kape.exe' -Recurse -File -ErrorAction SilentlyContinue |
+        Sort-Object { ($_.FullName -split '\\').Count } |
         Select-Object -First 1
     if (-not $exe) {
         Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
