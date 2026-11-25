@@ -218,11 +218,18 @@ foreach ($item in $plan) {
                 # AllUsers so the module is available to the SYSTEM-context
                 # scheduled tasks and to any analyst who logs in, not just
                 # whoever happened to run setup.
+                # Windows PowerShell 5.1's PowerShellGet can still raise a
+                # confirmation prompt here even with -Force (a long-known
+                # PowerShellGet quirk, not fixed by -Force alone) - confirmed
+                # by a real build failing with "Windows PowerShell is in
+                # NonInteractive mode. Read and Prompt functionality is not
+                # available" despite both lines below already being present.
+                # -Confirm:$false is the documented way to actually suppress it.
                 if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
-                    Install-PackageProvider -Name NuGet -Force -Scope AllUsers | Out-Null
+                    Install-PackageProvider -Name NuGet -Force -Confirm:$false -Scope AllUsers | Out-Null
                 }
                 Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
-                Install-Module -Name $t.Source.Module -Scope AllUsers -Force -AllowClobber -ErrorAction Stop
+                Install-Module -Name $t.Source.Module -Scope AllUsers -Force -Confirm:$false -AllowClobber -ErrorAction Stop
             }
             'PipVenv' {
                 # A dedicated venv per tool, not a shared global pip install -

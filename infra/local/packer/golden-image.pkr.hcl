@@ -362,10 +362,24 @@ build {
       // it's instantly there the moment WinRM itself reconnects.
       "for ($i = 0; $i -lt 30 -and -not (Test-Path -LiteralPath $src -PathType Leaf); $i++) { Start-Sleep -Seconds 1 }",
       "if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { throw \"KAPE zip not visible via shared folder after 30s: $src - is VMware Tools' HGFS service running?\" }",
-      "New-Item -ItemType Directory -Path C:\\Tools\\kape -Force | Out-Null",
       "Copy-Item -LiteralPath $src -Destination C:\\Windows\\Temp\\kape.zip -Force",
-      "Expand-Archive -LiteralPath C:\\Windows\\Temp\\kape.zip -DestinationPath C:\\Tools\\kape -Force",
-      "Remove-Item C:\\Windows\\Temp\\kape.zip -Force"
+      // A real build's KAPE zip extracted with kape.exe nested a directory
+      // or two deep rather than at the archive root (Setup-Workstation.ps1
+      // then reported kape.exe missing at C:\Tools\kape even though the
+      // zip WAS staged successfully) - this exact zip-layout problem is
+      // already solved elsewhere in this repo (infra\scripts\
+      // bootstrap-investigation-host.ps1's Install-KapeFromZip) for the
+      // cloud module; reuse that same recursive-find-and-flatten approach
+      // here instead of a plain Expand-Archive that assumes a flat root.
+      "$staging = Join-Path $env:TEMP ('kape-extract-' + [guid]::NewGuid().ToString('N'))",
+      "Expand-Archive -LiteralPath C:\\Windows\\Temp\\kape.zip -DestinationPath $staging -Force",
+      "$kapeExe = Get-ChildItem -LiteralPath $staging -Filter 'kape.exe' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1",
+      "if (-not $kapeExe) { throw \"kape.zip extracted but no kape.exe was found anywhere inside it (searched $staging recursively) - check the zip's layout\" }",
+      "New-Item -ItemType Directory -Path C:\\Tools\\kape -Force | Out-Null",
+      "Get-ChildItem -LiteralPath $kapeExe.DirectoryName -Force | Move-Item -Destination C:\\Tools\\kape -Force",
+      "Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue",
+      "if (-not (Test-Path -LiteralPath 'C:\\Tools\\kape\\kape.exe' -PathType Leaf)) { throw 'kape.exe still missing from C:\\Tools\\kape after flattening' }",
+      "Remove-Item -LiteralPath C:\\Windows\\Temp\\kape.zip -Force"
     ]
   }
 
