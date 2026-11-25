@@ -373,7 +373,15 @@ build {
       // here instead of a plain Expand-Archive that assumes a flat root.
       "$staging = Join-Path $env:TEMP ('kape-extract-' + [guid]::NewGuid().ToString('N'))",
       "Expand-Archive -LiteralPath C:\\Windows\\Temp\\kape.zip -DestinationPath $staging -Force",
-      "$kapeExe = Get-ChildItem -LiteralPath $staging -Filter 'kape.exe' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1",
+      // A real build's kape.zip has more than one file named kape.exe
+      // inside it (e.g. a bundled sample/decoy a few levels deeper) -
+      // -Recurse's enumeration order is not guaranteed shallowest-first,
+      // so a bare "Select -First 1" picked a nested decoy whose
+      // directory then failed to resolve. Sort by path depth (fewest
+      // separators = closest to the extraction root) and take that one,
+      // which is the real top-level installer regardless of how many
+      // other kape.exe-named files exist deeper in the archive.
+      "$kapeExe = Get-ChildItem -LiteralPath $staging -Filter 'kape.exe' -Recurse -File -ErrorAction SilentlyContinue | Sort-Object { ($_.FullName -split '\\\\').Count } | Select-Object -First 1",
       "if (-not $kapeExe) { throw \"kape.zip extracted but no kape.exe was found anywhere inside it (searched $staging recursively) - check the zip's layout\" }",
       "New-Item -ItemType Directory -Path C:\\Tools\\kape -Force | Out-Null",
       "Get-ChildItem -LiteralPath $kapeExe.DirectoryName -Force | Move-Item -Destination C:\\Tools\\kape -Force",
