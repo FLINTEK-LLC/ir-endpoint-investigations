@@ -38,3 +38,11 @@ Write-Host "Setup-Workstation.ps1 exited $LASTEXITCODE (non-zero does not fail t
 
 Write-Host "=== Golden image provisioning complete ===" -ForegroundColor Green
 Write-Host "Next: let Packer finish (it shuts the VM down), then run New-GoldenSnapshot.ps1 to take the 'golden-clean' snapshot this module's case lifecycle reverts to." -ForegroundColor Green
+
+# Without this, PowerShell silently propagates $LASTEXITCODE from the
+# inner Setup-Workstation.ps1 call (set on line 29) as THIS script's own
+# exit code, directly contradicting line 18/30's documented intent that
+# a non-hard-dependency tool failure must not fail the whole Packer
+# build - confirmed by a real build failing on exactly this despite
+# printing "non-zero does not fail this build" right before it did.
+exit 0
