@@ -426,4 +426,31 @@ build {
   provisioner "powershell" {
     script = "${path.root}/scripts/provision-setup-workstation.ps1"
   }
+
+  // Clear AutoLogon credentials LAST, not right after first logon. This
+  // used to run as FirstLogonCommands step 7 (disable AutoAdminLogon,
+  // remove the plaintext DefaultPassword) - but that runs BEFORE the
+  // VMware Tools install's own later reboot, so by the time that reboot
+  // happened, autologon was already disabled and the VM came back to a
+  // cold logon screen with no one signed in at all (not just "locked") -
+  // a real build confirmed this is why the shared-folder KAPE step
+  // needed a manual unlock every time (a VMware HGFS shared folder only
+  // resolves with an actual interactive logon). AutoLogon's own
+  // LogonCount=1 already grants two real automatic logons, due to a
+  // documented Microsoft "+1" quirk (set LogonCount to one fewer than
+  // desired) - exactly covering the OOBE boot and this build's one later
+  // reboot, as long as the credentials aren't wiped in between. Clearing
+  // them here instead, as the last provisioner before Packer shuts the
+  // VM down, keeps the same end goal (no plaintext credential left in
+  // the finished golden image) without starving a reboot this build
+  // itself still needs to get through.
+  provisioner "powershell" {
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "$k = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'",
+      "Set-ItemProperty $k -Name AutoLogonCount -Value 0 -ErrorAction SilentlyContinue",
+      "Set-ItemProperty $k -Name AutoAdminLogon -Value '0' -ErrorAction SilentlyContinue",
+      "Remove-ItemProperty $k -Name DefaultPassword -ErrorAction SilentlyContinue"
+    ]
+  }
 }
