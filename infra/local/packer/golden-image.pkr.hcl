@@ -371,7 +371,21 @@ build {
       // bootstrap-investigation-host.ps1's Install-KapeFromZip) for the
       // cloud module; reuse that same recursive-find-and-flatten approach
       // here instead of a plain Expand-Archive that assumes a flat root.
-      "$staging = Join-Path $env:TEMP ('kape-extract-' + [guid]::NewGuid().ToString('N'))",
+      //
+      // Use a SHORT staging root (C:\K\<guid>), not $env:TEMP - KAPE's own
+      // bundled Targets/Modules tree is documented to contain long nested
+      // paths, and a real build hit 'Cannot find path ...\kape\KAPE\
+      // because it does not exist' consistently even after fixing which
+      // kape.exe match got picked (that fix was real but not the actual
+      // cause here) - the real cause was MAX_PATH: $env:TEMP's own base
+      // (C:\Users\<user>\AppData\Local\Temp\kape-extract-<32-char-guid>\)
+      // already used ~80+ characters before KAPE's own deep tree even
+      // started. Windows PowerShell 5.1 (what WinRM invokes here) does
+      // not reliably honor the LongPathsEnabled registry flag for every
+      // file API, so shrinking the base path is the more certain fix;
+      // LongPathsEnabled is still set (FirstLogonCommands step 1) as
+      // cheap defense-in-depth, not the primary fix.
+      "$staging = 'C:\\K' + [guid]::NewGuid().ToString('N').Substring(0, 8)",
       "Expand-Archive -LiteralPath C:\\Windows\\Temp\\kape.zip -DestinationPath $staging -Force",
       // A real build's kape.zip has more than one file named kape.exe
       // inside it (e.g. a bundled sample/decoy a few levels deeper) -
