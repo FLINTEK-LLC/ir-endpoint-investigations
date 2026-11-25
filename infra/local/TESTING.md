@@ -123,7 +123,15 @@ default and must be 12+ characters - Packer validates this before a
 build even starts. VMware Tools gets installed by a dedicated
 provisioner from Workstation's own bundled `windows.iso`; if your
 Workstation install doesn't ship one, pass
-`-var "vmware_tools_iso_path=C:\path\to\windows.iso"`.)
+`-var "vmware_tools_iso_path=C:\path\to\windows.iso"`. `source_ref`
+defaults to `main` - the guest downloads this repo's own
+`scripts`/`Modules`/`templates`/`velociraptor` directories directly from
+GitHub over HTTPS during the build, rather than Packer uploading them
+over WinRM; pass `-var "source_ref=<branch>"` to build against an
+unmerged branch instead. KAPE, if supplied, is staged via a temporary
+VMware Workstation shared folder rather than a WinRM upload - both of
+these replaced an earlier design that uploaded everything over WinRM,
+after that repeatedly failed on large-file transfers in real builds.)
 
 **Make sure VMware Workstation's own application window is already open**
 (step 1) before running this - see that step's note on why. Expect this

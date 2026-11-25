@@ -129,6 +129,16 @@ variable "kape_zip_path" {
   default = ""
 }
 
+// Which branch/tag of this repo the guest downloads over HTTPS from
+// GitHub (replaces uploading repo files via Packer's WinRM file
+// provisioner - see the "Repo files via GitHub, not WinRM" note below).
+// Defaults to main (the stable, merged state); override to test an
+// unmerged branch before merge, same as this build is doing right now.
+variable "source_ref" {
+  type    = string
+  default = "main"
+}
+
 // XML-escape text before rendering; passwords containing &, < or quotes
 // must not corrupt the answer file. Keep the raw variables for WinRM.
 locals {
@@ -139,6 +149,38 @@ locals {
       winrm_username = var.winrm_username
       winrm_password = var.winrm_password
     } : key => replace(replace(replace(replace(replace(value, "&", "&amp;"), "<", "&lt;"), ">", "&gt;"), "\"", "&quot;"), "'", "&apos;")
+  }
+
+  // Packer's dirname()/basename() functions only split on "/", not "\" -
+  // confirmed by testing them directly against a Windows-style path (they
+  // return "." and the whole string unchanged, respectively). split("\\",
+  // ...) does handle a literal backslash correctly, so build basename/
+  // dirname from that instead of trusting dirname()/basename() here.
+  kape_zip_path_parts = var.kape_zip_path == "" ? [] : split("\\", var.kape_zip_path)
+  kape_zip_basename   = var.kape_zip_path == "" ? "" : local.kape_zip_path_parts[length(local.kape_zip_path_parts) - 1]
+  kape_zip_dir        = var.kape_zip_path == "" ? "" : join("\\", slice(local.kape_zip_path_parts, 0, length(local.kape_zip_path_parts) - 1))
+
+  // Temporary, build-time-only VMware Workstation shared folder (HGFS) -
+  // replaces uploading kape.zip via Packer's WinRM file provisioner,
+  // which failed twice in real builds with a WinRM shell-creation error
+  // ("forcibly closed by the remote host") on two different files. A
+  // shared folder is a hypervisor-level mechanism; it never touches the
+  // network stack or WinRM at all, so it can't hit that failure class.
+  // Omitted entirely (empty map) when kape_zip_path is unset. Left
+  // configured in the finished golden image's .vmx afterward (harmless:
+  // it just won't resolve if that host directory isn't present later;
+  // per-case evidence shared folders are configured dynamically via
+  // vmrun by New-LocalCase.ps1, independent of this one).
+  kape_shared_folder_vmx = var.kape_zip_path == "" ? {} : {
+    "isolation.tools.hgfs.disable" = "FALSE"
+    "sharedFolder.maxNum"          = "1"
+    "sharedFolder0.present"        = "TRUE"
+    "sharedFolder0.enabled"        = "TRUE"
+    "sharedFolder0.readAccess"     = "TRUE"
+    "sharedFolder0.writeAccess"    = "FALSE"
+    "sharedFolder0.hostPath"       = local.kape_zip_dir
+    "sharedFolder0.guestName"      = "packer-build-inputs"
+    "sharedFolder0.expiration"     = "never"
   }
   // Leave 4 MiB for alignment/metadata. The final recovery partition grows
   // into the remaining space; the Windows partition size follows disk_size_mb.
@@ -199,11 +241,11 @@ source "vmware-iso" "golden" {
   // guest's own power plan is also disabled via powercfg below as a
   // second, independent layer (this is also just correct for an
   // always-on investigation host, not only a build-time workaround).
-  vmx_data = {
+  vmx_data = merge({
     "firmware"                = "efi"
     "uefi.secureBoot.enabled" = "FALSE"
     "suspend.disabled"        = "TRUE"
-  }
+  }, local.kape_shared_folder_vmx)
 
   // The ISO's "Press any key to boot from CD or DVD" prompt has a very
   // short accept-window (observed: a couple seconds), and it starts
@@ -291,41 +333,77 @@ build {
   // runs. An empty `only` list means ALL builders, so use `except` to
   // skip these provisioners when the optional zip is absent.
   //
+  // KAPE via shared folder, not WinRM upload: Packer's WinRM file
+  // provisioner failed twice in real builds with a WinRM shell-creation
+  // error ("forcibly closed by the remote host") on two different large
+  // files (the VMware Tools ISO, then this kape.zip) - WinRM's own
+  // file-transfer path has been the single least reliable part of this
+  // whole build. The shared folder (sharedFolder0, configured in
+  // vmx_data above) is a hypervisor-level mechanism that never touches
+  // the network stack or WinRM, so it can't hit that failure class.
+  //
   // pause_before: the preceding windows-restart provisioner already
   // confirmed WinRM was reachable again post-reboot, but a real build
   // still hit a bare connection-level failure ("dial tcp ... connectex")
   // on the very next operation - VMware Tools' own install touches
   // network components, so there can be a few more seconds of settling
   // right after this specific reboot even once WinRM's basic check
-  // passes. A short pause here is cheap insurance against that one-off
-  // race; it does not fix a deterministic failure.
-  provisioner "file" {
+  // passes. Keep the pause for that; it is unrelated to the WinRM-
+  // upload reliability problem the shared folder switch addresses.
+  provisioner "powershell" {
     except       = var.kape_zip_path == "" ? ["vmware-iso.golden"] : []
     pause_before = "30s"
-    source       = var.kape_zip_path
-    destination  = "C:/Windows/Temp/kape.zip"
-  }
-
-  provisioner "powershell" {
-    except = var.kape_zip_path == "" ? ["vmware-iso.golden"] : []
     inline = [
       "$ErrorActionPreference = 'Stop'",
+      "$src = '\\\\vmware-host\\Shared Folders\\packer-build-inputs\\${local.kape_zip_basename}'",
+      // HGFS (the shared-folder driver) comes up as part of VMware Tools,
+      // which the earlier provisioner just installed and restarted into -
+      // give it a few seconds to actually be ready rather than assuming
+      // it's instantly there the moment WinRM itself reconnects.
+      "for ($i = 0; $i -lt 30 -and -not (Test-Path -LiteralPath $src -PathType Leaf); $i++) { Start-Sleep -Seconds 1 }",
+      "if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { throw \"KAPE zip not visible via shared folder after 30s: $src - is VMware Tools' HGFS service running?\" }",
       "New-Item -ItemType Directory -Path C:\\Tools\\kape -Force | Out-Null",
+      "Copy-Item -LiteralPath $src -Destination C:\\Windows\\Temp\\kape.zip -Force",
       "Expand-Archive -LiteralPath C:\\Windows\\Temp\\kape.zip -DestinationPath C:\\Tools\\kape -Force",
       "Remove-Item C:\\Windows\\Temp\\kape.zip -Force"
     ]
   }
 
-  // Copy the runtime source directories explicitly. Uploading the whole
-  // repo would also upload the active output VM/ISO/cache when it lives
-  // under this tree, including potentially locked VMDKs and build secrets.
+  // Repo files via GitHub, not WinRM: previously uploaded via Packer's
+  // WinRM file provisioner (the same unreliable mechanism KAPE above
+  // just moved away from). This repo is already public, so there is no
+  // new exposure in having the guest pull it directly; the guest already
+  // needs outbound internet for Setup-Workstation.ps1's own tool
+  // downloads (Volatility3 via pip, MemProcFS, etc.), so this adds no
+  // new network requirement. Also makes this provisioner portable to any
+  // future hypervisor (Proxmox/ESXi) with zero change, unlike a VMware-
+  // specific shared folder - this is a generic HTTPS download.
+  //
+  // Downloads GitHub's own ref/zip archive rather than requiring git.exe
+  // to be installed in the guest first - same result (repo files, pulled
+  // over HTTPS, no WinRM), one less moving part. GitHub's archive zip
+  // wraps everything in a single top-level "<repo>-<ref>/" folder; strip
+  // that layer when moving the needed paths into their final location.
   provisioner "powershell" {
-    inline = ["New-Item -ItemType Directory -Path C:\\ir-endpoint-investigations -Force | Out-Null"]
-  }
-
-  provisioner "file" {
-    sources     = [for entry in ["scripts", "Modules", "templates", "velociraptor", "README.md", "LICENSE", "METHODOLOGY.md"] : "${path.root}/../../../${entry}"]
-    destination = "C:/ir-endpoint-investigations/"
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "$zipUrl = 'https://github.com/FLINTEK-LLC/ir-endpoint-investigations/archive/refs/heads/${var.source_ref}.zip'",
+      "$zipPath = 'C:\\Windows\\Temp\\ir-endpoint-investigations-src.zip'",
+      "$extractPath = 'C:\\Windows\\Temp\\ir-endpoint-investigations-src'",
+      "Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing",
+      "Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force",
+      // GitHub names the extracted top-level folder <repo>-<ref-with-slashes-replaced>;
+      // find it rather than hardcoding the exact name.
+      "$srcRoot = (Get-ChildItem -LiteralPath $extractPath -Directory | Select-Object -First 1).FullName",
+      "if (-not $srcRoot) { throw \"GitHub archive extracted but no top-level folder found under $extractPath\" }",
+      "New-Item -ItemType Directory -Path C:\\ir-endpoint-investigations -Force | Out-Null",
+      "foreach ($entry in @('scripts', 'Modules', 'templates', 'velociraptor', 'README.md', 'LICENSE', 'METHODOLOGY.md')) {",
+      "  $from = Join-Path $srcRoot $entry",
+      "  if (Test-Path -LiteralPath $from) { Copy-Item -LiteralPath $from -Destination 'C:\\ir-endpoint-investigations\\' -Recurse -Force } else { Write-Warning \"Expected repo entry missing from GitHub archive: $entry\" }",
+      "}",
+      "Remove-Item -LiteralPath $zipPath -Force",
+      "Remove-Item -LiteralPath $extractPath -Recurse -Force"
+    ]
   }
 
   // Reuses this repo's OWN Setup-Workstation.ps1 rather than reimplementing
